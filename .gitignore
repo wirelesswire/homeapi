@@ -1,0 +1,4 @@
+.zig
+.zig-cache
+zig-out
+zig.lock    
