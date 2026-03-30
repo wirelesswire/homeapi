@@ -1,0 +1,17 @@
+name: Moje darmowe CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobranie kodu
+        uses: actions/checkout@v4
+        
+      - name: Wypisz wiadomość
+        run: echo "Hello World! To moje darmowe CI/CD."
