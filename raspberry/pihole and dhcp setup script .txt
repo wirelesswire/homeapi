@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# --- KONFIGURACJA SIECI ---
+PIHOLE_DIR="$HOME/pihole"
+PASSWORD="twoje_haslo_tutaj"
+TIMEZONE="Europe/Warsaw"
+
+# Adres IP Twojego FunBoxa (zazwyczaj 192.168.1.1)
+ROUTER_IP="192.168.1.1"
+# Zakres adresów IP, które Pi-hole ma nadawać urządzeniom
+DHCP_START="192.168.1.10"
+DHCP_END="192.168.1.250"
+
+echo "--- 1. Naprawa uprawnień Dockera i portu 53 ---"
+sudo usermod -aG docker $USER
+sudo sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf
+sudo sed -i 's/DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf
+sudo rm /etc/resolv.conf
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+sudo systemctl restart systemd-resolved
+
+echo "--- 2. Tworzenie folderu i docker-compose.yml ---"
+mkdir -p $PIHOLE_DIR
+cd $PIHOLE_DIR
+
+cat <<EOF > docker-compose.yml
+services:
+  pihole:
+    container_name: pihole
+    image: pihole/pihole:latest
+    # W trybie DHCP najlepiej użyć 'network_mode: host', aby pakiety rozgłoszeniowe (broadcast)
+    # docierały do kontenera bez przeszkód.
+    network_mode: host
+    environment:
+      TZ: '$TIMEZONE'
+      FTLCONF_webserver_api_password: '$PASSWORD'
+      FTLCONF_dns_listeningMode: 'ALL'
+      # Konfiguracja DHCP
+      FTLCONF_dhcp_active: 'true'
+      FTLCONF_dhcp_range: '$DHCP_START,$DHCP_END,24h'
+      FTLCONF_dhcp_router: '$ROUTER_IP'
+    dns:
+      - 127.0.0.1
+      - 8.8.8.8
+    volumes:
+      - './etc-pihole:/etc/pihole'
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+      - SYS_NICE
+    restart: unless-stopped
+EOF
+
+echo "--- 3. Uruchamianie Pi-hole ---"
+sudo docker compose down
+sudo docker compose up -d
+
+echo "-------------------------------------------------------"
+echo "GOTOWE! Pi-hole działa teraz w trybie HOST (obsługa DHCP)."
+echo "Panel admina: http://$(hostname -I | awk '{print $1}')/admin"
+echo "Hasło: $PASSWORD"
+echo ""
+echo "WAŻNY KROK TERAZ:"
+echo "1. Zaloguj się do FunBoxa (http://192.168.1.1)."
+echo "2. Wyłącz w nim serwer DHCP (Ustawienia zaawansowane -> Sieć -> DHCP)."
+echo "3. Zrestartuj WiFi w telefonie/komputerze, aby pobrać IP z Pi-hole."
+echo "-------------------------------------------------------"
