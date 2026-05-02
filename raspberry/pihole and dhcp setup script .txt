@@ -1,47 +1,56 @@
+
 #!/bin/bash
 
-# --- KONFIGURACJA SIECI ---
+# --- KONFIGURACJA (MOŻESZ ZMIENIĆ) ---
 PIHOLE_DIR="$HOME/pihole"
-PASSWORD="twoje_haslo_tutaj"
+PASSWORD="admin"
 TIMEZONE="Europe/Warsaw"
 
-# Adres IP Twojego FunBoxa
+PI_IP="192.168.1.14/24"
 ROUTER_IP="192.168.1.1"
-# Zakres adresów IP dla pozostałych urządzeń
-DHCP_START="192.168.1.10"
+DHCP_START="192.168.1.20"
 DHCP_END="192.168.1.250"
 
-# --- SEKCOJA: STAŁE ADRESY IP (REZERWACJE) ---
-# Format: "MAC_ADRES,ADRES_IP,NAZWA"
-# MAC adres znajdziesz na naklejce urządzenia lub w panelu FunBoxa
+# --- TWOJE STATYCZNE URZĄDZENIA ---
 STATYCZNE_IP=(
-    "AA:BB:CC:DD:EE:FF,192.168.1.5,MojKomputer"
-    "11:22:33:44:55:66,192.168.1.6,Drukarka"
+    "10:5B:AD:A1:55:A9,192.168.1.15,laptop"
+    "50:91:E2:21:BA:17,192.168.1.12,stacjonarny"
     "00:11:22:33:44:55,192.168.1.7,Telewizor"
 )
 
-echo "--- 1. Przygotowanie systemu ---"
+echo "--- 1. Ustawianie statycznego IP Maliny w systemie ---"
+if ! grep -q "interface wlan0" /etc/dhcpcd.conf; then
+    sudo bash -c "cat <<EOF >> /etc/dhcpcd.conf
+interface wlan0
+static ip_address=$PI_IP
+static routers=$ROUTER_IP
+static domain_name_servers=1.1.1.1 8.8.8.8
+EOF"
+    echo "[+] Statyczne IP dopisane do /etc/dhcpcd.conf"
+else
+    echo "[!] IP dla wlan0 było już skonfigurowane."
+fi
+
+echo "--- 2. Naprawa portu 53 i uprawnień Dockera ---"
 sudo usermod -aG docker $USER
 sudo sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf
 sudo sed -i 's/DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf
-sudo rm /etc/resolv.conf
+sudo rm -f /etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 sudo systemctl restart systemd-resolved
 
-echo "--- 2. Tworzenie folderów ---"
+echo "--- 3. Tworzenie folderów projektu ---"
 mkdir -p "$PIHOLE_DIR/etc-pihole"
 mkdir -p "$PIHOLE_DIR/etc-dnsmasq.d"
 
-echo "--- 3. Generowanie statycznych rezerwacji IP ---"
-# Czyścimy stary plik i wpisujemy nowe rezerwacje
+echo "--- 4. Generowanie rezerwacji DHCP ---"
 STATIC_CONF="$PIHOLE_DIR/etc-dnsmasq.d/04-static-dhcp.conf"
-echo "# Plik wygenerowany automatycznie - statyczne IP" > "$STATIC_CONF"
-
+echo "# Wygenerowane przez skrypt" > "$STATIC_CONF"
 for entry in "${STATYCZNE_IP[@]}"; do
     echo "dhcp-host=$entry" >> "$STATIC_CONF"
 done
 
-echo "--- 4. Generowanie docker-compose.yml ---"
+echo "--- 5. Generowanie czystego pliku docker-compose.yml ---"
 cat <<EOF > "$PIHOLE_DIR/docker-compose.yml"
 services:
   pihole:
@@ -55,6 +64,7 @@ services:
       FTLCONF_dhcp_active: 'true'
       FTLCONF_dhcp_range: '$DHCP_START,$DHCP_END,24h'
       FTLCONF_dhcp_router: '$ROUTER_IP'
+      INTERFACE: 'wlan0'
     dns:
       - 127.0.0.1
       - 8.8.8.8
@@ -63,19 +73,20 @@ services:
       - './etc-dnsmasq.d:/etc/dnsmasq.d'
     cap_add:
       - NET_ADMIN
+      - NET_RAW
       - SYS_TIME
       - SYS_NICE
     restart: unless-stopped
 EOF
 
-echo "--- 5. Uruchamianie Pi-hole ---"
+echo "--- 6. Uruchamianie Pi-hole ---"
 cd "$PIHOLE_DIR"
-sudo docker compose down
+sudo docker compose down --remove-orphans
 sudo docker compose up -d
 
 echo "-------------------------------------------------------"
-echo "GOTOWE! Rezerwacje IP zostały dodane."
-echo "Skonfigurowane urządzenia:"
-for entry in "${STATYCZNE_IP[@]}"; do echo " - $entry"; done
+echo "SUKCES! Malina ma statyczne IP: $PI_IP"
+echo "Pi-hole działa: http://$PI_IP/admin"
+echo "DHCP Pi-hole: WŁĄCZONE (Zakres: $DHCP_START - $DHCP_END)"
 echo "-------------------------------------------------------"
-echo "Pamiętaj o wyłączeniu DHCP w FunBoxie!"
+echo "TERAZ MOŻESZ WYŁĄCZYĆ DHCP W FUNBOXIE."
