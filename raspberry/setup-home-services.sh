@@ -151,6 +151,40 @@ ensure_static_reservations_valid() {
     done
 }
 
+configure_static_ip_with_nmcli() {
+    local connection_name
+
+    if ! command -v nmcli >/dev/null 2>&1; then
+        return 1
+    fi
+
+    connection_name="$(nmcli -t -f GENERAL.CONNECTION device show "$INTERFACE" | sed 's/^GENERAL.CONNECTION://')"
+    if [[ -z "$connection_name" || "$connection_name" == "--" ]]; then
+        echo "[!] NetworkManager nie pokazuje aktywnego polaczenia dla ${INTERFACE}."
+        echo "    Dostepne polaczenia:"
+        nmcli con show
+        echo
+        read -r -p "Podaj nazwe polaczenia NetworkManager dla ${INTERFACE}: " connection_name
+    fi
+
+    [[ -n "$connection_name" && "$connection_name" != "--" ]] || fail "Nie podano nazwy polaczenia NetworkManager."
+
+    sudo nmcli con mod "$connection_name" ipv4.addresses "$PI_IP_CIDR"
+    sudo nmcli con mod "$connection_name" ipv4.gateway "$ROUTER_IP"
+    sudo nmcli con mod "$connection_name" ipv4.dns "${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}"
+    sudo nmcli con mod "$connection_name" ipv4.method manual
+    sudo nmcli con mod "$connection_name" connection.autoconnect yes
+
+    echo "[+] Ustawiono statyczne IPv4 przez NetworkManager"
+    echo "    Interfejs: ${INTERFACE}"
+    echo "    Polaczenie: ${connection_name}"
+    echo "    IP: ${PI_IP_CIDR}"
+    echo "    Brama: ${ROUTER_IP}"
+    echo
+    echo "[i] Aktywuje polaczenie. Jesli laczysz sie po SSH przez ten interfejs, sesja moze sie na chwile rozlaczyc."
+    sudo nmcli con up "$connection_name"
+}
+
 append_dhcpcd_config() {
     if grep -q "^interface ${INTERFACE}$" /etc/dhcpcd.conf; then
         echo "[!] Sekcja dla ${INTERFACE} juz istnieje w /etc/dhcpcd.conf"
@@ -171,6 +205,15 @@ EOF
 
     echo "[+] Dodano statyczne IP dla interfejsu ${INTERFACE}"
     echo "[i] Zrestartuj Maline albo usluge dhcpcd po zakonczeniu skryptu."
+}
+
+configure_static_ip() {
+    if configure_static_ip_with_nmcli; then
+        return
+    fi
+
+    echo "[i] Nie znaleziono nmcli, uzywam starej metody przez /etc/dhcpcd.conf"
+    append_dhcpcd_config
 }
 
 ensure_media_disk_mount() {
@@ -307,7 +350,7 @@ main() {
     local static_conf="${PIHOLE_DIR}/etc-dnsmasq.d/04-static-dhcp.conf"
 
     echo "--- 1. Ustawianie statycznego IP Maliny ---"
-    append_dhcpcd_config
+    configure_static_ip
 
     echo "--- 2. Przygotowanie dysku dla Jellyfina ---"
     ensure_media_disk_mount
