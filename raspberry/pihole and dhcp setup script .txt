@@ -1,92 +1,298 @@
-
 #!/bin/bash
 
-# --- KONFIGURACJA (MOŻESZ ZMIENIĆ) ---
-PIHOLE_DIR="$HOME/pihole"
+set -euo pipefail
+
+# --- KONFIGURACJA ---
+BASE_DIR="${HOME}/home-services"
+PIHOLE_DIR="${BASE_DIR}/pihole"
+TAILSCALE_DIR="${BASE_DIR}/tailscale"
+JELLYFIN_DIR="${BASE_DIR}/jellyfin"
+JELLYFIN_MEDIA_DIR="${JELLYFIN_DIR}/media"
 PASSWORD="admin"
 TIMEZONE="Europe/Warsaw"
 
-PI_IP="192.168.1.14/24"
+INTERFACE="${INTERFACE:-}"
+PI_IP_CIDR="192.168.1.14/24"
 ROUTER_IP="192.168.1.1"
 DHCP_START="192.168.1.20"
 DHCP_END="192.168.1.250"
+UPSTREAM_DNS_1="1.1.1.1"
+UPSTREAM_DNS_2="8.8.8.8"
+TAILSCALE_HOSTNAME="raspberry-home"
+TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-}"
+JELLYFIN_HTTP_PORT="8096"
+JELLYFIN_HTTPS_PORT="8920"
 
-# --- TWOJE STATYCZNE URZĄDZENIA ---
-STATYCZNE_IP=(
+# --- TWOJE STATYCZNE URZADZENIA ---
+STATIC_IPS=(
     "10:5B:AD:A1:55:A9,192.168.1.15,laptop"
     "50:91:E2:21:BA:17,192.168.1.12,stacjonarny"
-    "00:11:22:33:44:55,192.168.1.7,Telewizor"
+    "00:11:22:33:44:55,192.168.1.7,telewizor"
 )
 
-echo "--- 1. Ustawianie statycznego IP Maliny w systemie ---"
-if ! grep -q "interface wlan0" /etc/dhcpcd.conf; then
-    sudo bash -c "cat <<EOF >> /etc/dhcpcd.conf
-interface wlan0
-static ip_address=$PI_IP
-static routers=$ROUTER_IP
-static domain_name_servers=1.1.1.1 8.8.8.8
-EOF"
-    echo "[+] Statyczne IP dopisane do /etc/dhcpcd.conf"
-else
-    echo "[!] IP dla wlan0 było już skonfigurowane."
-fi
+require_command() {
+    local command_name="$1"
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "[!] Brakuje polecenia: $command_name"
+        exit 1
+    fi
+}
 
-echo "--- 2. Naprawa portu 53 i uprawnień Dockera ---"
-sudo usermod -aG docker $USER
-sudo sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf
-sudo sed -i 's/DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf
-sudo rm -f /etc/resolv.conf
-echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-sudo systemctl restart systemd-resolved
+fail() {
+    echo "[!] $1"
+    exit 1
+}
 
-echo "--- 3. Tworzenie folderów projektu ---"
-mkdir -p "$PIHOLE_DIR/etc-pihole"
-mkdir -p "$PIHOLE_DIR/etc-dnsmasq.d"
+validate_ip() {
+    local ip="$1"
+    if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        return 1
+    fi
 
-echo "--- 4. Generowanie rezerwacji DHCP ---"
-STATIC_CONF="$PIHOLE_DIR/etc-dnsmasq.d/04-static-dhcp.conf"
-echo "# Wygenerowane przez skrypt" > "$STATIC_CONF"
-for entry in "${STATYCZNE_IP[@]}"; do
-    echo "dhcp-host=$entry" >> "$STATIC_CONF"
-done
+    IFS='.' read -r o1 o2 o3 o4 <<< "$ip"
+    for octet in "$o1" "$o2" "$o3" "$o4"; do
+        if (( octet < 0 || octet > 255 )); then
+            return 1
+        fi
+    done
+}
 
-echo "--- 5. Generowanie czystego pliku docker-compose.yml ---"
-cat <<EOF > "$PIHOLE_DIR/docker-compose.yml"
+validate_cidr() {
+    local cidr="$1"
+    if [[ ! "$cidr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$ ]]; then
+        return 1
+    fi
+
+    local ip_part="${cidr%/*}"
+    validate_ip "$ip_part"
+}
+
+validate_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    (( port >= 1 && port <= 65535 ))
+}
+
+ip_to_int() {
+    local ip="$1"
+    IFS='.' read -r o1 o2 o3 o4 <<< "$ip"
+    echo $(( (o1 << 24) + (o2 << 16) + (o3 << 8) + o4 ))
+}
+
+same_subnet_24() {
+    local ip_a="$1"
+    local ip_b="$2"
+    [[ "${ip_a%.*}" == "${ip_b%.*}" ]]
+}
+
+ensure_interface_selected() {
+    if [[ -z "$INTERFACE" ]]; then
+        fail "Ustaw INTERFACE, np. INTERFACE=eth0 albo INTERFACE=wlan0. Skrypt nie zgaduje interfejsu automatycznie."
+    fi
+
+    if ! ip link show "$INTERFACE" >/dev/null 2>&1; then
+        fail "Interfejs '$INTERFACE' nie istnieje na tej malinie."
+    fi
+}
+
+ensure_network_values() {
+    validate_cidr "$PI_IP_CIDR" || fail "PI_IP_CIDR musi miec format np. 192.168.1.14/24"
+    validate_ip "$ROUTER_IP" || fail "ROUTER_IP nie jest poprawnym adresem IPv4"
+    validate_ip "$DHCP_START" || fail "DHCP_START nie jest poprawnym adresem IPv4"
+    validate_ip "$DHCP_END" || fail "DHCP_END nie jest poprawnym adresem IPv4"
+    validate_ip "$UPSTREAM_DNS_1" || fail "UPSTREAM_DNS_1 nie jest poprawnym adresem IPv4"
+    validate_ip "$UPSTREAM_DNS_2" || fail "UPSTREAM_DNS_2 nie jest poprawnym adresem IPv4"
+    validate_port "$JELLYFIN_HTTP_PORT" || fail "JELLYFIN_HTTP_PORT musi byc portem 1-65535"
+    validate_port "$JELLYFIN_HTTPS_PORT" || fail "JELLYFIN_HTTPS_PORT musi byc portem 1-65535"
+
+    local pi_ip="${PI_IP_CIDR%/*}"
+    local start_int end_int pi_int router_int
+    start_int="$(ip_to_int "$DHCP_START")"
+    end_int="$(ip_to_int "$DHCP_END")"
+    pi_int="$(ip_to_int "$pi_ip")"
+    router_int="$(ip_to_int "$ROUTER_IP")"
+
+    (( start_int <= end_int )) || fail "DHCP_START musi byc mniejszy lub rowny DHCP_END"
+    same_subnet_24 "$pi_ip" "$ROUTER_IP" || fail "Malina i Funbox musza byc w tej samej podsieci /24"
+    same_subnet_24 "$pi_ip" "$DHCP_START" || fail "DHCP_START musi byc w tej samej podsieci /24 co malina"
+    same_subnet_24 "$pi_ip" "$DHCP_END" || fail "DHCP_END musi byc w tej samej podsieci /24 co malina"
+
+    (( pi_int < start_int || pi_int > end_int )) || fail "Adres maliny nie moze byc w puli DHCP"
+    (( router_int < start_int || router_int > end_int )) || fail "Adres Funboxa nie moze byc w puli DHCP"
+}
+
+ensure_static_reservations_valid() {
+    local pi_ip="${PI_IP_CIDR%/*}"
+    local pi_int router_int reservation_mac reservation_ip reservation_host reservation_int
+    pi_int="$(ip_to_int "$pi_ip")"
+    router_int="$(ip_to_int "$ROUTER_IP")"
+
+    for entry in "${STATIC_IPS[@]}"; do
+        IFS=',' read -r reservation_mac reservation_ip reservation_host <<< "$entry"
+
+        [[ -n "$reservation_mac" && -n "$reservation_ip" && -n "$reservation_host" ]] || fail "Nieprawidlowy wpis STATIC_IPS: $entry"
+        validate_ip "$reservation_ip" || fail "Rezerwacja ma niepoprawne IP: $entry"
+        same_subnet_24 "$pi_ip" "$reservation_ip" || fail "Rezerwacja jest poza podsiecia maliny: $entry"
+
+        reservation_int="$(ip_to_int "$reservation_ip")"
+        (( reservation_int != pi_int )) || fail "Rezerwacja koliduje z adresem maliny: $entry"
+        (( reservation_int != router_int )) || fail "Rezerwacja koliduje z adresem Funboxa: $entry"
+    done
+}
+
+append_dhcpcd_config() {
+    if grep -q "^interface ${INTERFACE}$" /etc/dhcpcd.conf; then
+        echo "[!] Sekcja dla ${INTERFACE} juz istnieje w /etc/dhcpcd.conf"
+        echo "    Sprawdz recznie, czy zawiera:"
+        echo "    static ip_address=${PI_IP_CIDR}"
+        echo "    static routers=${ROUTER_IP}"
+        echo "    static domain_name_servers=${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}"
+        return
+    fi
+
+    sudo tee -a /etc/dhcpcd.conf >/dev/null <<EOF
+
+interface ${INTERFACE}
+static ip_address=${PI_IP_CIDR}
+static routers=${ROUTER_IP}
+static domain_name_servers=${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}
+EOF
+
+    echo "[+] Dodano statyczne IP dla interfejsu ${INTERFACE}"
+    echo "[i] Zrestartuj Maline albo usluge dhcpcd po zakonczeniu skryptu."
+}
+
+write_static_dhcp_config() {
+    local static_conf="$1"
+
+    {
+        echo "# Wygenerowane przez skrypt"
+        for entry in "${STATIC_IPS[@]}"; do
+            echo "dhcp-host=${entry}"
+        done
+    } > "$static_conf"
+}
+
+write_compose_file() {
+    cat > "${BASE_DIR}/docker-compose.yml" <<EOF
 services:
   pihole:
     container_name: pihole
     image: pihole/pihole:latest
     network_mode: host
     environment:
-      TZ: '$TIMEZONE'
-      FTLCONF_webserver_api_password: '$PASSWORD'
+      TZ: '${TIMEZONE}'
+      FTLCONF_webserver_api_password: '${PASSWORD}'
       FTLCONF_dns_listeningMode: 'ALL'
+      FTLCONF_dns_upstreams: '${UPSTREAM_DNS_1};${UPSTREAM_DNS_2}'
       FTLCONF_dhcp_active: 'true'
-      FTLCONF_dhcp_range: '$DHCP_START,$DHCP_END,24h'
-      FTLCONF_dhcp_router: '$ROUTER_IP'
-      INTERFACE: 'wlan0'
-    dns:
-      - 127.0.0.1
-      - 8.8.8.8
+      FTLCONF_dhcp_range: '${DHCP_START},${DHCP_END},24h'
+      FTLCONF_dhcp_router: '${ROUTER_IP}'
+      INTERFACE: '${INTERFACE}'
     volumes:
-      - './etc-pihole:/etc/pihole'
-      - './etc-dnsmasq.d:/etc/dnsmasq.d'
+      - '${PIHOLE_DIR}/etc-pihole:/etc/pihole'
+      - '${PIHOLE_DIR}/etc-dnsmasq.d:/etc/dnsmasq.d'
     cap_add:
       - NET_ADMIN
       - NET_RAW
       - SYS_TIME
       - SYS_NICE
     restart: unless-stopped
+
+  tailscale:
+    container_name: tailscale
+    image: tailscale/tailscale:latest
+    hostname: '${TAILSCALE_HOSTNAME}'
+    network_mode: host
+    environment:
+      TS_AUTHKEY: '${TAILSCALE_AUTHKEY}'
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: 'false'
+      TS_ACCEPT_DNS: 'false'
+      TS_EXTRA_ARGS: '--accept-dns=false'
+    volumes:
+      - '${TAILSCALE_DIR}/state:/var/lib/tailscale'
+      - '/dev/net/tun:/dev/net/tun'
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    restart: unless-stopped
+
+  jellyfin:
+    container_name: jellyfin
+    image: jellyfin/jellyfin:latest
+    environment:
+      TZ: '${TIMEZONE}'
+    ports:
+      - '${JELLYFIN_HTTP_PORT}:8096'
+      - '${JELLYFIN_HTTPS_PORT}:8920'
+      - '7359:7359/udp'
+      - '1900:1900/udp'
+    volumes:
+      - '${JELLYFIN_DIR}/config:/config'
+      - '${JELLYFIN_DIR}/cache:/cache'
+      - '${JELLYFIN_MEDIA_DIR}:/media'
+    restart: unless-stopped
 EOF
+}
 
-echo "--- 6. Uruchamianie Pi-hole ---"
-cd "$PIHOLE_DIR"
-sudo docker compose down --remove-orphans
-sudo docker compose up -d
+main() {
+    require_command docker
+    require_command ip
+    require_command sudo
 
-echo "-------------------------------------------------------"
-echo "SUKCES! Malina ma statyczne IP: $PI_IP"
-echo "Pi-hole działa: http://$PI_IP/admin"
-echo "DHCP Pi-hole: WŁĄCZONE (Zakres: $DHCP_START - $DHCP_END)"
-echo "-------------------------------------------------------"
-echo "TERAZ MOŻESZ WYŁĄCZYĆ DHCP W FUNBOXIE."
+    ensure_interface_selected
+    ensure_network_values
+    ensure_static_reservations_valid
+
+    local pi_ip="${PI_IP_CIDR%/*}"
+    local static_conf="${PIHOLE_DIR}/etc-dnsmasq.d/04-static-dhcp.conf"
+
+    echo "--- 1. Ustawianie statycznego IP Maliny ---"
+    append_dhcpcd_config
+
+    echo "--- 2. Przygotowanie folderow projektu ---"
+    mkdir -p "${PIHOLE_DIR}/etc-pihole"
+    mkdir -p "${PIHOLE_DIR}/etc-dnsmasq.d"
+    mkdir -p "${TAILSCALE_DIR}/state"
+    mkdir -p "${JELLYFIN_DIR}/config"
+    mkdir -p "${JELLYFIN_DIR}/cache"
+    mkdir -p "${JELLYFIN_MEDIA_DIR}"
+
+    echo "--- 3. Generowanie rezerwacji DHCP ---"
+    write_static_dhcp_config "$static_conf"
+
+    echo "--- 4. Generowanie docker-compose.yml ---"
+    write_compose_file
+
+    echo "--- 5. Uruchamianie uslug ---"
+    cd "${BASE_DIR}"
+    sudo docker compose down --remove-orphans
+    sudo docker compose up -d
+
+    echo
+    echo "SUKCES"
+    echo "Interfejs maliny: ${INTERFACE}"
+    echo "Adres maliny: ${pi_ip}"
+    echo "Panel Pi-hole: http://${pi_ip}/admin"
+    echo "Jellyfin: http://${pi_ip}:${JELLYFIN_HTTP_PORT}"
+    echo "DHCP Pi-hole: WLACZONE (${DHCP_START} - ${DHCP_END})"
+    echo "Brama dla klientow: ${ROUTER_IP}"
+    echo "DNS upstream: ${UPSTREAM_DNS_1}, ${UPSTREAM_DNS_2}"
+    echo
+    if [[ -z "$TAILSCALE_AUTHKEY" ]]; then
+        echo "TAILSCALE: kontener uruchomiony bez klucza autoryzacyjnego. Zaloguj go recznie po starcie."
+    else
+        echo "TAILSCALE: kontener uruchomiony z podanym kluczem autoryzacyjnym."
+    fi
+    echo
+    echo "KOLEJNOSC MIGRACJI:"
+    echo "1. Sprawdz, czy panel Pi-hole odpowiada pod http://${pi_ip}/admin"
+    echo "2. Sprawdz, czy Jellyfin odpowiada pod http://${pi_ip}:${JELLYFIN_HTTP_PORT}"
+    echo "3. Sprawdz, czy Pi-hole rozwiazuje DNS i ma internet"
+    echo "4. Dopiero potem wylacz DHCP w Funboxie"
+    echo "5. Odnow dzierzawe IP na urzadzeniach w domu"
+}
+
+main "$@"
+
