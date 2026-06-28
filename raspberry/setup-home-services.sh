@@ -186,25 +186,43 @@ configure_static_ip_with_nmcli() {
 }
 
 append_dhcpcd_config() {
-    if grep -q "^interface ${INTERFACE}$" /etc/dhcpcd.conf; then
-        echo "[!] Sekcja dla ${INTERFACE} juz istnieje w /etc/dhcpcd.conf"
-        echo "    Sprawdz recznie, czy zawiera:"
-        echo "    static ip_address=${PI_IP_CIDR}"
-        echo "    static routers=${ROUTER_IP}"
-        echo "    static domain_name_servers=${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}"
-        return
-    fi
+    local tmp_conf
+    tmp_conf="$(mktemp)"
 
-    sudo tee -a /etc/dhcpcd.conf >/dev/null <<EOF
+    sudo awk '
+        /^# home-services static ip start$/ { skip = 1; next }
+        /^# home-services static ip end$/ { skip = 0; next }
+        skip == 0 { print }
+    ' /etc/dhcpcd.conf > "$tmp_conf"
 
+    cat >> "$tmp_conf" <<EOF
+
+# home-services static ip start
 interface ${INTERFACE}
 static ip_address=${PI_IP_CIDR}
 static routers=${ROUTER_IP}
 static domain_name_servers=${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}
+# home-services static ip end
 EOF
 
-    echo "[+] Dodano statyczne IP dla interfejsu ${INTERFACE}"
-    echo "[i] Zrestartuj Maline albo usluge dhcpcd po zakonczeniu skryptu."
+    sudo cp /etc/dhcpcd.conf /etc/dhcpcd.conf.home-services.bak
+    sudo cp "$tmp_conf" /etc/dhcpcd.conf
+    rm -f "$tmp_conf"
+
+    echo "[+] Ustawiono statyczne IP w /etc/dhcpcd.conf"
+
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^dhcpcd\.service'; then
+        sudo systemctl enable dhcpcd >/dev/null 2>&1 || true
+        sudo systemctl restart dhcpcd || true
+    elif command -v dhcpcd >/dev/null 2>&1; then
+        sudo dhcpcd -n "$INTERFACE" || true
+    fi
+
+    if ! ip -4 addr show "$INTERFACE" | grep -q "${PI_IP_CIDR%/*}"; then
+        echo "[i] Nadaje IPv4 od razu, bez czekania na restart uslugi."
+        sudo ip addr add "$PI_IP_CIDR" dev "$INTERFACE" 2>/dev/null || true
+        sudo ip route replace default via "$ROUTER_IP" dev "$INTERFACE"
+    fi
 }
 
 configure_static_ip() {
