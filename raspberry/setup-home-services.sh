@@ -7,7 +7,6 @@ BASE_DIR="${HOME}/home-services"
 PIHOLE_DIR="${BASE_DIR}/pihole"
 TAILSCALE_DIR="${BASE_DIR}/tailscale"
 JELLYFIN_DIR="${BASE_DIR}/jellyfin"
-JELLYFIN_MEDIA_DIR="${JELLYFIN_DIR}/media"
 PASSWORD="admin"
 TIMEZONE="Europe/Warsaw"
 
@@ -22,6 +21,11 @@ TAILSCALE_HOSTNAME="raspberry-home"
 TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-}"
 JELLYFIN_HTTP_PORT="8096"
 JELLYFIN_HTTPS_PORT="8920"
+
+MEDIA_DISK_UUID="010A-F2E7"
+MEDIA_DISK_TYPE="exfat"
+MEDIA_MOUNT_DIR="/mnt/Expansion"
+JELLYFIN_MEDIA_CONTAINER_DIR="/media/Expansion"
 
 # --- TWOJE STATYCZNE URZADZENIA ---
 STATIC_IPS=(
@@ -85,10 +89,17 @@ same_subnet_24() {
     [[ "${ip_a%.*}" == "${ip_b%.*}" ]]
 }
 
-ensure_interface_selected() {
-    if [[ -z "$INTERFACE" ]]; then
-        fail "Ustaw INTERFACE, np. INTERFACE=eth0 albo INTERFACE=wlan0. Skrypt nie zgaduje interfejsu automatycznie."
+select_interface() {
+    if [[ -n "$INTERFACE" ]]; then
+        echo "[i] Uzywam interfejsu z INTERFACE=${INTERFACE}"
+    else
+        echo "Dostepne interfejsy sieciowe:"
+        ip -o link show | awk -F': ' '{print " - " $2}'
+        echo
+        read -r -p "Podaj interfejs dla statycznego IP i DHCP Pi-hole, np. eth0 albo wlan0: " INTERFACE
     fi
+
+    [[ -n "$INTERFACE" ]] || fail "Nie podano interfejsu."
 
     if ! ip link show "$INTERFACE" >/dev/null 2>&1; then
         fail "Interfejs '$INTERFACE' nie istnieje na tej malinie."
@@ -162,6 +173,40 @@ EOF
     echo "[i] Zrestartuj Maline albo usluge dhcpcd po zakonczeniu skryptu."
 }
 
+ensure_media_disk_mount() {
+    require_command findmnt
+    require_command blkid
+
+    if ! blkid -U "$MEDIA_DISK_UUID" >/dev/null 2>&1; then
+        echo "[!] Nie widze dysku UUID=${MEDIA_DISK_UUID}."
+        echo "    Jellyfin wystartuje, ale katalog ${MEDIA_MOUNT_DIR} moze byc pusty."
+        echo "    Sprawdz dysk poleceniem: lsblk -f"
+        sudo mkdir -p "$MEDIA_MOUNT_DIR"
+        return
+    fi
+
+    sudo mkdir -p "$MEDIA_MOUNT_DIR"
+
+    local fstab_line="UUID=${MEDIA_DISK_UUID} ${MEDIA_MOUNT_DIR} ${MEDIA_DISK_TYPE} defaults,nofail,uid=1000,gid=1000,umask=002,iocharset=utf8 0 0"
+    if ! grep -Eq "^[^#]*UUID=${MEDIA_DISK_UUID}[[:space:]]+${MEDIA_MOUNT_DIR}[[:space:]]" /etc/fstab; then
+        echo "$fstab_line" | sudo tee -a /etc/fstab >/dev/null
+        echo "[+] Dodano automatyczne montowanie dysku do /etc/fstab"
+    else
+        echo "[i] Wpis dla dysku UUID=${MEDIA_DISK_UUID} juz istnieje w /etc/fstab"
+    fi
+
+    if ! findmnt -rn "$MEDIA_MOUNT_DIR" >/dev/null 2>&1; then
+        sudo mount "$MEDIA_MOUNT_DIR"
+    fi
+
+    if findmnt -rn "$MEDIA_MOUNT_DIR" >/dev/null 2>&1; then
+        echo "[+] Dysk zamontowany w ${MEDIA_MOUNT_DIR}"
+    else
+        echo "[!] Nie udalo sie zamontowac dysku ${MEDIA_DISK_UUID}."
+        echo "    Sprobuj: sudo mount ${MEDIA_MOUNT_DIR}"
+    fi
+}
+
 write_static_dhcp_config() {
     local static_conf="$1"
 
@@ -233,7 +278,7 @@ services:
     volumes:
       - '${JELLYFIN_DIR}/config:/config'
       - '${JELLYFIN_DIR}/cache:/cache'
-      - '${JELLYFIN_MEDIA_DIR}:/media'
+      - '${MEDIA_MOUNT_DIR}:${JELLYFIN_MEDIA_CONTAINER_DIR}:ro'
     restart: unless-stopped
 EOF
 }
@@ -243,7 +288,7 @@ main() {
     require_command ip
     require_command sudo
 
-    ensure_interface_selected
+    select_interface
     ensure_network_values
     ensure_static_reservations_valid
 
@@ -253,21 +298,23 @@ main() {
     echo "--- 1. Ustawianie statycznego IP Maliny ---"
     append_dhcpcd_config
 
-    echo "--- 2. Przygotowanie folderow projektu ---"
+    echo "--- 2. Przygotowanie dysku dla Jellyfina ---"
+    ensure_media_disk_mount
+
+    echo "--- 3. Przygotowanie folderow projektu ---"
     mkdir -p "${PIHOLE_DIR}/etc-pihole"
     mkdir -p "${PIHOLE_DIR}/etc-dnsmasq.d"
     mkdir -p "${TAILSCALE_DIR}/state"
     mkdir -p "${JELLYFIN_DIR}/config"
     mkdir -p "${JELLYFIN_DIR}/cache"
-    mkdir -p "${JELLYFIN_MEDIA_DIR}"
 
-    echo "--- 3. Generowanie rezerwacji DHCP ---"
+    echo "--- 4. Generowanie rezerwacji DHCP ---"
     write_static_dhcp_config "$static_conf"
 
-    echo "--- 4. Generowanie docker-compose.yml ---"
+    echo "--- 5. Generowanie docker-compose.yml ---"
     write_compose_file
 
-    echo "--- 5. Uruchamianie uslug ---"
+    echo "--- 6. Uruchamianie uslug ---"
     cd "${BASE_DIR}"
     sudo docker compose down --remove-orphans
     sudo docker compose up -d
@@ -278,6 +325,8 @@ main() {
     echo "Adres maliny: ${pi_ip}"
     echo "Panel Pi-hole: http://${pi_ip}/admin"
     echo "Jellyfin: http://${pi_ip}:${JELLYFIN_HTTP_PORT}"
+    echo "Media Jellyfin w kontenerze: ${JELLYFIN_MEDIA_CONTAINER_DIR}"
+    echo "Dysk na malinie: ${MEDIA_MOUNT_DIR}"
     echo "DHCP Pi-hole: WLACZONE (${DHCP_START} - ${DHCP_END})"
     echo "Brama dla klientow: ${ROUTER_IP}"
     echo "DNS upstream: ${UPSTREAM_DNS_1}, ${UPSTREAM_DNS_2}"
@@ -291,9 +340,10 @@ main() {
     echo "KOLEJNOSC MIGRACJI:"
     echo "1. Sprawdz, czy panel Pi-hole odpowiada pod http://${pi_ip}/admin"
     echo "2. Sprawdz, czy Jellyfin odpowiada pod http://${pi_ip}:${JELLYFIN_HTTP_PORT}"
-    echo "3. Sprawdz, czy Pi-hole rozwiazuje DNS i ma internet"
-    echo "4. Dopiero potem wylacz DHCP w Funboxie"
-    echo "5. Odnow dzierzawe IP na urzadzeniach w domu"
+    echo "3. W Jellyfin dodaj biblioteke z katalogu ${JELLYFIN_MEDIA_CONTAINER_DIR}"
+    echo "4. Sprawdz, czy Pi-hole rozwiazuje DNS i ma internet"
+    echo "5. Dopiero potem wylacz DHCP w Funboxie"
+    echo "6. Odnow dzierzawe IP na urzadzeniach w domu"
 }
 
 main "$@"
