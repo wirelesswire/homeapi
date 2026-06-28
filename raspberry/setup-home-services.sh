@@ -219,6 +219,16 @@ write_static_dhcp_config() {
     } > "$static_conf"
 }
 
+write_static_dhcp_env_block() {
+    local entry reservation_mac reservation_ip reservation_host
+
+    echo "      FTLCONF_misc_dnsmasq_lines: |-"
+    for entry in "${STATIC_IPS[@]}"; do
+        IFS=',' read -r reservation_mac reservation_ip reservation_host <<< "$entry"
+        echo "        dhcp-host=${reservation_mac},id:*,${reservation_ip},${reservation_host}"
+    done
+}
+
 write_compose_file() {
     cat > "${BASE_DIR}/docker-compose.yml" <<EOF
 services:
@@ -235,6 +245,7 @@ services:
       FTLCONF_dhcp_start: '${DHCP_START}'
       FTLCONF_dhcp_end: '${DHCP_END}'
       FTLCONF_dhcp_router: '${ROUTER_IP}'
+$(write_static_dhcp_env_block)
       INTERFACE: '${INTERFACE}'
     volumes:
       - '${PIHOLE_DIR}/etc-pihole:/etc/pihole'
