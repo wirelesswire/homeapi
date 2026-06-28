@@ -168,7 +168,8 @@ write_static_dhcp_config() {
     {
         echo "# Wygenerowane przez skrypt"
         for entry in "${STATIC_IPS[@]}"; do
-            echo "dhcp-host=${entry}"
+            IFS=',' read -r reservation_mac reservation_ip reservation_host <<< "$entry"
+            echo "dhcp-host=${reservation_mac},id:*,${reservation_ip},${reservation_host}"
         done
     } > "$static_conf"
 }
@@ -296,4 +297,3 @@ main() {
 }
 
 main "$@"
-
