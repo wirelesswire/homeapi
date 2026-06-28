@@ -106,6 +106,17 @@ select_interface() {
     fi
 }
 
+ask_tailscale_authkey() {
+    if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
+        return
+    fi
+
+    echo
+    echo "Tailscale auth key jest opcjonalny, ale bez niego kontener moze byc szary/offline, dopoki nie zalogujesz go recznie."
+    echo "Klucz utworzysz w panelu Tailscale jako ephemeral=false/reusable, jesli chcesz wielokrotnie odpalac ten skrypt."
+    read -r -p "Wklej TAILSCALE_AUTHKEY albo zostaw puste i nacisnij Enter: " TAILSCALE_AUTHKEY
+}
+
 ensure_network_values() {
     validate_cidr "$PI_IP_CIDR" || fail "PI_IP_CIDR musi miec format np. 192.168.1.14/24"
     validate_ip "$ROUTER_IP" || fail "ROUTER_IP nie jest poprawnym adresem IPv4"
@@ -234,6 +245,28 @@ configure_static_ip() {
     append_dhcpcd_config
 }
 
+ensure_tailscale_tun() {
+    if [[ -e /dev/net/tun ]]; then
+        echo "[+] /dev/net/tun istnieje"
+        return
+    fi
+
+    echo "[i] Przygotowuje /dev/net/tun dla Tailscale..."
+    sudo modprobe tun 2>/dev/null || true
+    sudo mkdir -p /dev/net
+
+    if [[ ! -e /dev/net/tun ]]; then
+        sudo mknod /dev/net/tun c 10 200
+        sudo chmod 600 /dev/net/tun
+    fi
+
+    if [[ -e /dev/net/tun ]]; then
+        echo "[+] /dev/net/tun gotowe"
+    else
+        echo "[!] /dev/net/tun nadal nie istnieje. Tailscale moze nie wstac poprawnie."
+    fi
+}
+
 ensure_media_disk_mount() {
     require_command findmnt
     require_command blkid
@@ -331,9 +364,11 @@ $(write_static_dhcp_env_block)
       TS_EXTRA_ARGS: '--accept-dns=false'
     volumes:
       - '${TAILSCALE_DIR}/state:/var/lib/tailscale'
+    devices:
       - '/dev/net/tun:/dev/net/tun'
     cap_add:
       - NET_ADMIN
+      - NET_RAW
       - SYS_MODULE
     restart: unless-stopped
 
@@ -361,6 +396,7 @@ main() {
     require_command sudo
 
     select_interface
+    ask_tailscale_authkey
     ensure_network_values
     ensure_static_reservations_valid
 
@@ -373,20 +409,23 @@ main() {
     echo "--- 2. Przygotowanie dysku dla Jellyfina ---"
     ensure_media_disk_mount
 
-    echo "--- 3. Przygotowanie folderow projektu ---"
+    echo "--- 3. Przygotowanie Tailscale ---"
+    ensure_tailscale_tun
+
+    echo "--- 4. Przygotowanie folderow projektu ---"
     mkdir -p "${PIHOLE_DIR}/etc-pihole"
     mkdir -p "${PIHOLE_DIR}/etc-dnsmasq.d"
     mkdir -p "${TAILSCALE_DIR}/state"
     mkdir -p "${JELLYFIN_DIR}/config"
     mkdir -p "${JELLYFIN_DIR}/cache"
 
-    echo "--- 4. Generowanie rezerwacji DHCP ---"
+    echo "--- 5. Generowanie rezerwacji DHCP ---"
     write_static_dhcp_config "$static_conf"
 
-    echo "--- 5. Generowanie docker-compose.yml ---"
+    echo "--- 6. Generowanie docker-compose.yml ---"
     write_compose_file
 
-    echo "--- 6. Uruchamianie uslug ---"
+    echo "--- 7. Uruchamianie uslug ---"
     cd "${BASE_DIR}"
     sudo docker compose down --remove-orphans
     sudo docker compose up -d
@@ -404,10 +443,14 @@ main() {
     echo "DNS upstream: ${UPSTREAM_DNS_1}, ${UPSTREAM_DNS_2}"
     echo
     if [[ -z "$TAILSCALE_AUTHKEY" ]]; then
-        echo "TAILSCALE: kontener uruchomiony bez klucza autoryzacyjnego. Zaloguj go recznie po starcie."
+        echo "TAILSCALE: kontener uruchomiony bez klucza autoryzacyjnego."
+        echo "          Jesli w panelu jest szary/offline, zaloguj go:"
+        echo "          sudo docker exec -it tailscale tailscale up --accept-dns=false --hostname=${TAILSCALE_HOSTNAME}"
     else
         echo "TAILSCALE: kontener uruchomiony z podanym kluczem autoryzacyjnym."
     fi
+    echo "Status Tailscale sprawdzisz:"
+    echo "sudo docker exec tailscale tailscale status"
     echo
     echo "KOLEJNOSC MIGRACJI:"
     echo "1. Sprawdz, czy panel Pi-hole odpowiada pod http://${pi_ip}/admin"
