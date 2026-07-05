@@ -251,29 +251,46 @@ install_static_ip_boot_service() {
 
     sudo tee "$helper_path" >/dev/null <<EOF
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 INTERFACE="${INTERFACE}"
 PI_IP_CIDR="${PI_IP_CIDR}"
 ROUTER_IP="${ROUTER_IP}"
 DNS_SERVERS="${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}"
+LOG_PREFIX="[home-services-static-ip]"
 
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if ip link show "\$INTERFACE" >/dev/null 2>&1; then
-        break
+for attempt in \$(seq 1 60); do
+    if ! ip link show "\$INTERFACE" >/dev/null 2>&1; then
+        echo "\$LOG_PREFIX czekam na interfejs \$INTERFACE (\$attempt/60)"
+        sleep 1
+        continue
     fi
+
+    ip link set "\$INTERFACE" up 2>/dev/null || true
+    ip addr replace "\$PI_IP_CIDR" dev "\$INTERFACE" 2>/dev/null || true
+    ip route replace default via "\$ROUTER_IP" dev "\$INTERFACE" 2>/dev/null || true
+
+    {
+        for dns in \$DNS_SERVERS; do
+            echo "nameserver \$dns"
+        done
+    } > /etc/resolv.conf
+
+    if ip -4 addr show "\$INTERFACE" | grep -q "\${PI_IP_CIDR%/*}"; then
+        if ping -c 1 -W 1 "\$ROUTER_IP" >/dev/null 2>&1; then
+            echo "\$LOG_PREFIX gotowe: \$PI_IP_CIDR na \$INTERFACE, brama \$ROUTER_IP odpowiada"
+            exit 0
+        fi
+        echo "\$LOG_PREFIX IP jest ustawione, czekam az brama odpowie (\$attempt/60)"
+    else
+        echo "\$LOG_PREFIX czekam na ustawienie IPv4 (\$attempt/60)"
+    fi
+
     sleep 1
 done
 
-ip link set "\$INTERFACE" up
-ip addr replace "\$PI_IP_CIDR" dev "\$INTERFACE"
-ip route replace default via "\$ROUTER_IP" dev "\$INTERFACE"
-
-{
-    for dns in \$DNS_SERVERS; do
-        echo "nameserver \$dns"
-    done
-} > /etc/resolv.conf
+echo "\$LOG_PREFIX koncze po timeout; zostawiam ostatnia probe konfiguracji"
+exit 0
 EOF
 
     sudo chmod 755 "$helper_path"
@@ -282,7 +299,7 @@ EOF
 [Unit]
 Description=Home services static IPv4 setup
 DefaultDependencies=no
-After=sys-subsystem-net-devices-${INTERFACE}.device local-fs.target
+After=sys-subsystem-net-devices-${INTERFACE}.device local-fs.target wpa_supplicant.service dhcpcd.service
 Wants=sys-subsystem-net-devices-${INTERFACE}.device
 Before=docker.service network-online.target
 
