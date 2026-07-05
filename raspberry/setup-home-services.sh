@@ -245,6 +245,64 @@ configure_static_ip() {
     append_dhcpcd_config
 }
 
+install_static_ip_boot_service() {
+    local helper_path="/usr/local/sbin/home-services-static-ip.sh"
+    local service_path="/etc/systemd/system/home-services-static-ip.service"
+
+    sudo tee "$helper_path" >/dev/null <<EOF
+#!/bin/bash
+set -euo pipefail
+
+INTERFACE="${INTERFACE}"
+PI_IP_CIDR="${PI_IP_CIDR}"
+ROUTER_IP="${ROUTER_IP}"
+DNS_SERVERS="${ROUTER_IP} ${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}"
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ip link show "\$INTERFACE" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+ip link set "\$INTERFACE" up
+ip addr replace "\$PI_IP_CIDR" dev "\$INTERFACE"
+ip route replace default via "\$ROUTER_IP" dev "\$INTERFACE"
+
+{
+    for dns in \$DNS_SERVERS; do
+        echo "nameserver \$dns"
+    done
+} > /etc/resolv.conf
+EOF
+
+    sudo chmod 755 "$helper_path"
+
+    sudo tee "$service_path" >/dev/null <<EOF
+[Unit]
+Description=Home services static IPv4 setup
+DefaultDependencies=no
+After=sys-subsystem-net-devices-${INTERFACE}.device local-fs.target
+Wants=sys-subsystem-net-devices-${INTERFACE}.device
+Before=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${helper_path}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable home-services-static-ip.service
+    sudo systemctl restart home-services-static-ip.service
+
+    echo "[+] Dodano usluge startowa home-services-static-ip.service"
+    echo "    Po restarcie wymusi ${PI_IP_CIDR} na ${INTERFACE} i trase przez ${ROUTER_IP}."
+}
+
 ensure_tailscale_tun() {
     if [[ -e /dev/net/tun ]]; then
         echo "[+] /dev/net/tun istnieje"
@@ -406,26 +464,29 @@ main() {
     echo "--- 1. Ustawianie statycznego IP Maliny ---"
     configure_static_ip
 
-    echo "--- 2. Przygotowanie dysku dla Jellyfina ---"
+    echo "--- 2. Instalacja uslugi statycznego IP po restarcie ---"
+    install_static_ip_boot_service
+
+    echo "--- 3. Przygotowanie dysku dla Jellyfina ---"
     ensure_media_disk_mount
 
-    echo "--- 3. Przygotowanie Tailscale ---"
+    echo "--- 4. Przygotowanie Tailscale ---"
     ensure_tailscale_tun
 
-    echo "--- 4. Przygotowanie folderow projektu ---"
+    echo "--- 5. Przygotowanie folderow projektu ---"
     mkdir -p "${PIHOLE_DIR}/etc-pihole"
     mkdir -p "${PIHOLE_DIR}/etc-dnsmasq.d"
     mkdir -p "${TAILSCALE_DIR}/state"
     mkdir -p "${JELLYFIN_DIR}/config"
     mkdir -p "${JELLYFIN_DIR}/cache"
 
-    echo "--- 5. Generowanie rezerwacji DHCP ---"
+    echo "--- 6. Generowanie rezerwacji DHCP ---"
     write_static_dhcp_config "$static_conf"
 
-    echo "--- 6. Generowanie docker-compose.yml ---"
+    echo "--- 7. Generowanie docker-compose.yml ---"
     write_compose_file
 
-    echo "--- 7. Uruchamianie uslug ---"
+    echo "--- 8. Uruchamianie uslug ---"
     cd "${BASE_DIR}"
     sudo docker compose down --remove-orphans
     sudo docker compose up -d
