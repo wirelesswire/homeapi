@@ -16,6 +16,8 @@ bash ./validate-config.sh .env
 bash ./setup-home-services.sh
 ```
 
+Pierwsze pobieranie obrazów pokazuje postęp w terminalu i nie ma krótkiego limitu czasu; na wolniejszym łączu może potrwać kilkanaście minut.
+
 Ustaw dwa rozne dlugie hasla i opcjonalny klucz Tailscale. Interfejsy `eth0` i `wlan0` sa wykrywane automatycznie; ich nazwy zmieniaj tylko na nietypowym sprzecie. Hasla zawierajace znaki specjalne zapisz w pojedynczych cudzyslowach. Po udanym logowaniu instalator automatycznie wyczyści klucz Tailscale z `.env`. Dla pierwszego logowania bez klucza wykonaj po starcie:
 
 ```bash

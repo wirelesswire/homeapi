@@ -33,6 +33,8 @@ grep -Fq 'Skonfigurowano automatyczny failover' "${ROOT}/setup-home-services.sh"
 grep -Fq 'if exists "$ETH_INTERFACE" && carrier "$ETH_INTERFACE"' "${ROOT}/network-failover.sh"
 grep -Fq '[[ ! -d "$MEDIA_MOUNT_DIR" ]]' "${ROOT}/setup-home-services.sh"
 grep -Fq 'image: ghcr.io/google/cadvisor:v0.60.5' "${ROOT}/compose.yaml"
+grep -Fq 'TimeoutStartSec=0' "${ROOT}/setup-home-services.sh"
+grep -Fq 'sudo docker compose --env-file .env -f compose.yaml pull' "${ROOT}/setup-home-services.sh"
 if grep -Eq 'image:[[:space:]]+\$\{[A-Z_]+_IMAGE' "${ROOT}/compose.yaml"; then
     echo "Wersje obrazow nie moga zalezec od lokalnego .env." >&2
     exit 1

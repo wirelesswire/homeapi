@@ -183,7 +183,7 @@ ExecStartPre=/sbin/modprobe tun
 ExecStartPre=/usr/bin/test -c /dev/net/tun
 ExecStart=/usr/bin/docker compose --env-file ${BASE_DIR}/.env -f ${BASE_DIR}/compose.yaml up -d --remove-orphans
 ExecStop=/usr/bin/docker compose --env-file ${BASE_DIR}/.env -f ${BASE_DIR}/compose.yaml down --remove-orphans
-TimeoutStartSec=300
+TimeoutStartSec=0
 TimeoutStopSec=120
 
 [Install]
@@ -285,6 +285,8 @@ main() {
 
     cd "$BASE_DIR"
     sudo docker compose --env-file .env -f compose.yaml config --quiet
+    info "Pobieram obrazy kontenerow. Pierwsze uruchomienie moze potrwac kilkanascie minut."
+    sudo docker compose --env-file .env -f compose.yaml pull
     sudo touch /run/home-services-installing
     install_marker_created=true
     if ! sudo systemctl restart home-services-network.service; then
