@@ -5,6 +5,7 @@ Stos uruchamia Pi-hole z DHCP, Tailscale, Jellyfin oraz monitoring Grafana/Prome
 ## Instalacja
 
 Pierwsza instalacja wymaga tylko lokalnego pliku `.env` z hasłami. Plik jest ignorowany przez Git, więc kolejne aktualizacje go nie nadpisują.
+Wersje obrazów są przypięte bezpośrednio w wersjonowanym `compose.yaml`, dlatego aktualizacja nie wymaga synchronizowania ich z lokalnym `.env`.
 
 ```bash
 cd raspberry

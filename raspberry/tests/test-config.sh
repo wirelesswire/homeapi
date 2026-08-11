@@ -32,5 +32,10 @@ grep -q '^home_dhcp_pool_size 231$' "${tmp_dir}/dhcp.prom"
 grep -Fq 'Skonfigurowano automatyczny failover' "${ROOT}/setup-home-services.sh"
 grep -Fq 'if exists "$ETH_INTERFACE" && carrier "$ETH_INTERFACE"' "${ROOT}/network-failover.sh"
 grep -Fq '[[ ! -d "$MEDIA_MOUNT_DIR" ]]' "${ROOT}/setup-home-services.sh"
+grep -Fq 'image: ghcr.io/google/cadvisor:v0.60.5' "${ROOT}/compose.yaml"
+if grep -Eq 'image:[[:space:]]+\$\{[A-Z_]+_IMAGE' "${ROOT}/compose.yaml"; then
+    echo "Wersje obrazow nie moga zalezec od lokalnego .env." >&2
+    exit 1
+fi
 
 echo "[+] Testy konfiguracji i metryk DHCP przeszly."
