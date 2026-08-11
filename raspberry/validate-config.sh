@@ -64,7 +64,7 @@ for entry in "$DHCP_HOST_1" "$DHCP_HOST_2" "$DHCP_HOST_3"; do
     [[ "$mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || fail "Niepoprawny MAC: ${mac}"
     validate_ip "$ip" || fail "Niepoprawny adres rezerwacji: ${ip}"
     [[ "${ip%.*}" == "${pi_ip%.*}" ]] || fail "Rezerwacja ${ip} jest poza podsiecia."
-    [[ -n "$hostname" && -z "$extra" ]] || fail "Niepoprawna rezerwacja: ${entry}"
+    [[ -n "$hostname" && "$lease" =~ ^[1-9][0-9]*[mhdw]$ && -z "$extra" ]] || fail "Niepoprawna rezerwacja: ${entry}"
     mac_key=${mac,,}
     name_key=${hostname,,}
     [[ -z "${seen_mac[$mac_key]:-}" ]] || fail "Powtorzony MAC: ${mac}"

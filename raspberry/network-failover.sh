@@ -25,12 +25,13 @@ current_route_interface() {
 
 configure_dns() {
     local target=$1 iface
-    command -v resolvectl >/dev/null 2>&1 || return
+    command -v resolvectl >/dev/null 2>&1 || return 0
     for iface in "$ETH_INTERFACE" "$WLAN_INTERFACE"; do
         exists "$iface" && resolvectl revert "$iface" 2>/dev/null || true
     done
     resolvectl dns "$target" "$UPSTREAM_DNS_1" "$UPSTREAM_DNS_2" || true
     resolvectl domain "$target" '~.' || true
+    return 0
 }
 
 choose_interface() {
@@ -84,7 +85,7 @@ configure_interface() {
 
 run_once() {
     local attempt target
-    for attempt in $(seq 1 90); do
+    for ((attempt = 1; attempt <= 90; attempt++)); do
         if target="$(choose_interface)"; then
             configure_interface "$target"
             return

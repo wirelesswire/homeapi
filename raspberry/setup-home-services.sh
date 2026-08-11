@@ -12,19 +12,21 @@ ok() { printf '[+] %s\n' "$*"; }
 INSTALL_MARKER_CREATED=false
 cleanup_install_marker() {
     if [[ "${INSTALL_MARKER_CREATED:-false}" == true ]]; then
-        sudo rm -f /run/home-services-installing
+        sudo rm -f /run/home-services-installing || true
     fi
+    return 0
 }
 report_unhandled_error() {
-    local status=$?
-    printf '[!] Nieoczekiwany blad w linii %s (kod %s).\n' "${BASH_LINENO[0]:-?}" "$status" >&2
+    local status=$1 line=$2 command=$3
+    printf '[!] Nieoczekiwany blad w linii %s: %s (kod %s).\n' "$line" "$command" "$status" >&2
     return "$status"
 }
 trap cleanup_install_marker EXIT
-trap report_unhandled_error ERR
+trap 'report_unhandled_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "Brakuje polecenia: $1"
+    return 0
 }
 
 [[ -f "$SOURCE_ENV" ]] || fail "Brakuje ${SOURCE_ENV}. Skopiuj .env.example do .env i uzupelnij sekrety."
@@ -56,11 +58,12 @@ detect_network_interfaces() {
         fail "Nie znaleziono ${ETH_INTERFACE} ani ${WLAN_INTERFACE}."
     fi
     export ETH_INTERFACE WLAN_INTERFACE
+    return 0
 }
 
 write_networkd_link_config() {
     local interface_name=$1
-    [[ -e "/sys/class/net/${interface_name}" ]] || return
+    [[ -e "/sys/class/net/${interface_name}" ]] || return 0
     sudo tee "/etc/systemd/network/05-home-services-${interface_name}.network" >/dev/null <<EOF
 # Managed by home-services. IPv4 is assigned by home-services-network.service.
 [Match]
@@ -74,6 +77,7 @@ IPv6AcceptRA=yes
 [Link]
 RequiredForOnline=no
 EOF
+    return 0
 }
 
 configure_network_failover() {
@@ -91,6 +95,7 @@ configure_network_failover() {
     sudo chmod 755 /usr/local/sbin/home-services-network.sh
     ok "Skonfigurowano automatyczny failover: ${ETH_INTERFACE} -> ${WLAN_INTERFACE}."
     info "Zmiany sieci zostana zastosowane dopiero przy restarcie; biezace SSH pozostaje bez zmian."
+    return 0
 }
 
 remove_legacy_static_ip_service() {
@@ -100,6 +105,7 @@ remove_legacy_static_ip_service() {
         sudo rm -f /etc/systemd/system/home-services-static-ip.service /usr/local/sbin/home-services-static-ip.sh
         sudo systemctl daemon-reload
     fi
+    return 0
 }
 
 install_files() {
@@ -117,6 +123,7 @@ install_files() {
     sudo chown -R 472:472 "$BASE_DIR/grafana"
     sudo chown -R 65534:65534 "$BASE_DIR/prometheus"
     ok "Pliki zainstalowane w ${BASE_DIR}."
+    return 0
 }
 
 ensure_media_disk_mount() {
@@ -127,7 +134,7 @@ ensure_media_disk_mount() {
     fi
     if ! blkid -U "$MEDIA_DISK_UUID" >/dev/null 2>&1; then
         info "Dysk UUID=${MEDIA_DISK_UUID} nie jest widoczny; Jellyfin wystartuje z pustym katalogiem mediow."
-        return
+        return 0
     fi
     local fstab_line="UUID=${MEDIA_DISK_UUID} ${MEDIA_MOUNT_DIR} ${MEDIA_DISK_TYPE} defaults,nofail,x-systemd.automount,uid=1000,gid=1000,umask=002 0 0"
     if ! grep -Eq "^[^#]*UUID=${MEDIA_DISK_UUID}[[:space:]]+${MEDIA_MOUNT_DIR}[[:space:]]" /etc/fstab; then
@@ -137,6 +144,7 @@ ensure_media_disk_mount() {
     if ! findmnt -rn "$MEDIA_MOUNT_DIR" >/dev/null 2>&1; then
         sudo mount "$MEDIA_MOUNT_DIR" || info "Nie udalo sie zamontowac ${MEDIA_MOUNT_DIR}."
     fi
+    return 0
 }
 
 install_tun_boot_support() {
@@ -144,6 +152,7 @@ install_tun_boot_support() {
     sudo modprobe tun
     [[ -c /dev/net/tun ]] || fail "/dev/net/tun nie jest dostepne po zaladowaniu modulu tun."
     ok "Modul TUN jest gotowy i bedzie ladowany przy starcie."
+    return 0
 }
 
 install_systemd_units() {
@@ -232,6 +241,7 @@ EOF
     sudo systemctl enable home-services-network.service home-services-network-monitor.service \
         home-services.service home-services-dhcp-metrics.timer >/dev/null
     ok "Uslugi systemd zostaly zainstalowane."
+    return 0
 }
 
 enable_jellyfin_metrics() {
@@ -243,30 +253,39 @@ enable_jellyfin_metrics() {
     done
     if [[ ! -f "$config" ]]; then
         info "Jellyfin nie utworzyl jeszcze system.xml; metryki mozna wlaczyc ponownym uruchomieniem instalatora."
-        return
+        return 0
     fi
     if grep -q '<EnableMetrics>false</EnableMetrics>' "$config"; then
-        sudo sed -i 's#<EnableMetrics>false</EnableMetrics>#<EnableMetrics>true</EnableMetrics>#' "$config"
-        sudo docker compose --env-file "$BASE_DIR/.env" -f "$BASE_DIR/compose.yaml" restart jellyfin
-        ok "Wlaczono natywne metryki Jellyfin."
+        if sudo sed -i 's#<EnableMetrics>false</EnableMetrics>#<EnableMetrics>true</EnableMetrics>#' "$config" && \
+           sudo docker compose --env-file "$BASE_DIR/.env" -f "$BASE_DIR/compose.yaml" restart jellyfin; then
+            ok "Wlaczono natywne metryki Jellyfin."
+        else
+            info "Nie udalo sie automatycznie wlaczyc metryk Jellyfin; sam Jellyfin pozostaje uruchomiony."
+        fi
     fi
+    return 0
 }
 
 scrub_tailscale_authkey() {
-    [[ -n "${TAILSCALE_AUTHKEY:-}" ]] || return
+    [[ -n "${TAILSCALE_AUTHKEY:-}" ]] || return 0
     local attempt
-    for attempt in $(seq 1 30); do
+    for ((attempt = 1; attempt <= 30; attempt++)); do
         if sudo docker exec tailscale tailscale status >/dev/null 2>&1; then
-            sudo sed -i 's/^TAILSCALE_AUTHKEY=.*/TAILSCALE_AUTHKEY=/' "$BASE_DIR/.env"
+            if ! sudo sed -i 's/^TAILSCALE_AUTHKEY=.*/TAILSCALE_AUTHKEY=/' "$BASE_DIR/.env"; then
+                info "Tailscale dziala, ale nie udalo sie wyczyscic klucza z zainstalowanego .env."
+                return 0
+            fi
             if [[ -w "$SOURCE_ENV" ]]; then
-                sed -i 's/^TAILSCALE_AUTHKEY=.*/TAILSCALE_AUTHKEY=/' "$SOURCE_ENV"
+                sed -i 's/^TAILSCALE_AUTHKEY=.*/TAILSCALE_AUTHKEY=/' "$SOURCE_ENV" || \
+                    info "Nie udalo sie wyczyscic klucza ze zrodlowego .env."
             fi
             ok "Tailscale jest zalogowany; klucz jednorazowy usunieto z pliku .env."
-            return
+            return 0
         fi
         sleep 2
     done
     info "Tailscale nie potwierdzil logowania; klucz pozostaje w .env do kolejnej proby."
+    return 0
 }
 
 warn_about_existing_dhcp() {
@@ -279,6 +298,14 @@ warn_about_existing_dhcp() {
     else
         info "Zainstaluj nmap, aby komenda diagnose mogla wykrywac drugi serwer DHCP."
     fi
+    return 0
+}
+
+show_service_failure() {
+    local service=$1
+    sudo systemctl --no-pager --full status "$service" || true
+    sudo journalctl -u "$service" -n 80 --no-pager || true
+    return 0
 }
 
 main() {
@@ -299,14 +326,18 @@ main() {
     sudo touch /run/home-services-installing
     INSTALL_MARKER_CREATED=true
     if ! sudo systemctl restart home-services-network.service; then
+        show_service_failure home-services-network.service
         fail "Nie udalo sie uruchomic automatycznej konfiguracji sieci."
     fi
     if ! sudo systemctl restart home-services.service; then
+        show_service_failure home-services.service
         fail "Nie udalo sie uruchomic kontenerow."
     fi
     sudo rm -f /run/home-services-installing
     INSTALL_MARKER_CREATED=false
-    sudo systemctl start home-services-dhcp-metrics.timer
+    if ! sudo systemctl start home-services-dhcp-metrics.timer; then
+        info "Nie udalo sie uruchomic timera metryk DHCP; kontenery pozostaja uruchomione."
+    fi
     scrub_tailscale_authkey
     enable_jellyfin_metrics
     warn_about_existing_dhcp

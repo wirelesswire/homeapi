@@ -37,6 +37,18 @@ grep -Fq 'TimeoutStartSec=0' "${ROOT}/setup-home-services.sh"
 grep -Fq 'sudo docker compose --env-file .env -f compose.yaml pull' "${ROOT}/setup-home-services.sh"
 grep -Fq 'INSTALL_MARKER_CREATED=false' "${ROOT}/setup-home-services.sh"
 grep -Fq 'trap cleanup_install_marker EXIT' "${ROOT}/setup-home-services.sh"
+scrub_function="$(sed -n '/^scrub_tailscale_authkey()/,/^}/p' "${ROOT}/setup-home-services.sh")"
+eval "$scrub_function"
+export TAILSCALE_AUTHKEY=''
+scrub_tailscale_authkey
+
+link_function="$(sed -n '/^write_networkd_link_config()/,/^}/p' "${ROOT}/setup-home-services.sh")"
+eval "$link_function"
+write_networkd_link_config home_services_missing_interface
+
+dns_functions="$(sed -n '/^exists()/,/^}/p; /^configure_dns()/,/^}/p' "${ROOT}/network-failover.sh")"
+eval "$dns_functions"
+PATH=/nonexistent configure_dns wlan0
 if grep -Fq 'networkctl reload' "${ROOT}/setup-home-services.sh"; then
     echo "Instalator nie moze przeladowywac sieci podczas sesji SSH." >&2
     exit 1
