@@ -27,7 +27,6 @@ require_command ip
 require_command systemctl
 require_command sudo
 require_command awk
-require_command networkctl
 docker compose version >/dev/null 2>&1 || fail "Wymagany jest Docker Compose v2."
 
 bash "${SCRIPT_DIR}/validate-config.sh" "$SOURCE_ENV"
@@ -76,9 +75,8 @@ configure_network_failover() {
     write_networkd_link_config "$WLAN_INTERFACE"
     sudo cp "${SCRIPT_DIR}/network-failover.sh" /usr/local/sbin/home-services-network.sh
     sudo chmod 755 /usr/local/sbin/home-services-network.sh
-    sudo networkctl reload
     ok "Skonfigurowano automatyczny failover: ${ETH_INTERFACE} -> ${WLAN_INTERFACE}."
-    info "Podczas instalacji zachowuje obecne polaczenie; po restarcie Ethernet bedzie preferowany."
+    info "Zmiany sieci zostana zastosowane dopiero przy restarcie; biezace SSH pozostaje bez zmian."
 }
 
 remove_legacy_static_ip_service() {

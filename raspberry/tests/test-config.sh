@@ -35,6 +35,10 @@ grep -Fq '[[ ! -d "$MEDIA_MOUNT_DIR" ]]' "${ROOT}/setup-home-services.sh"
 grep -Fq 'image: ghcr.io/google/cadvisor:v0.60.5' "${ROOT}/compose.yaml"
 grep -Fq 'TimeoutStartSec=0' "${ROOT}/setup-home-services.sh"
 grep -Fq 'sudo docker compose --env-file .env -f compose.yaml pull' "${ROOT}/setup-home-services.sh"
+if grep -Fq 'networkctl reload' "${ROOT}/setup-home-services.sh"; then
+    echo "Instalator nie moze przeladowywac sieci podczas sesji SSH." >&2
+    exit 1
+fi
 if grep -Eq 'image:[[:space:]]+\$\{[A-Z_]+_IMAGE' "${ROOT}/compose.yaml"; then
     echo "Wersje obrazow nie moga zalezec od lokalnego .env." >&2
     exit 1

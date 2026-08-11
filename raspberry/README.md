@@ -28,7 +28,7 @@ Po potwierdzeniu działania Pi-hole wyłącz DHCP w Funboxie i odnów dzierżawy
 
 ## Aktualizacja istniejącej instalacji
 
-Nie edytuj ręcznie plików w `/etc/systemd/network` ani ustawień interfejsu w `.env`. Instalator sam usuwa starszą konfigurację zarządzaną przez ten projekt, wykrywa `eth0` i `wlan0`, zachowuje bieżące połączenie podczas instalacji i po restarcie preferuje Ethernet z automatycznym powrotem na Wi-Fi.
+Nie edytuj ręcznie plików w `/etc/systemd/network` ani ustawień interfejsu w `.env`. Instalator sam usuwa starszą konfigurację zarządzaną przez ten projekt i wykrywa `eth0` oraz `wlan0`. Nie przeładowuje sieci podczas sesji SSH; konfiguracja zaczyna działać dopiero po restarcie, preferując Ethernet z automatycznym powrotem na Wi-Fi.
 
 ```bash
 cd ~/homeapi
