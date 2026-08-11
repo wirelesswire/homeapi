@@ -29,4 +29,8 @@ DHCP_START=192.168.1.20 DHCP_END=192.168.1.250 \
 grep -q '^home_dhcp_active_leases 1$' "${tmp_dir}/dhcp.prom"
 grep -q '^home_dhcp_pool_size 231$' "${tmp_dir}/dhcp.prom"
 
+grep -Fq 'Skonfigurowano automatyczny failover' "${ROOT}/setup-home-services.sh"
+grep -Fq 'if exists "$ETH_INTERFACE" && carrier "$ETH_INTERFACE"' "${ROOT}/network-failover.sh"
+grep -Fq '[[ ! -d "$MEDIA_MOUNT_DIR" ]]' "${ROOT}/setup-home-services.sh"
+
 echo "[+] Testy konfiguracji i metryk DHCP przeszly."

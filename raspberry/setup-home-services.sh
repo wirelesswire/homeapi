@@ -27,6 +27,7 @@ require_command ip
 require_command systemctl
 require_command sudo
 require_command awk
+require_command networkctl
 docker compose version >/dev/null 2>&1 || fail "Wymagany jest Docker Compose v2."
 
 bash "${SCRIPT_DIR}/validate-config.sh" "$SOURCE_ENV"
@@ -35,84 +36,49 @@ if [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
     info "Architektura $(uname -m) nie jest 64-bit ARM; obrazy musza obslugiwac te platforme."
 fi
 
-[[ -e "/sys/class/net/${INTERFACE}" ]] || fail "Interfejs ${INTERFACE} nie istnieje."
-
-configure_networkmanager() {
-    local connection_name
-    connection_name="$(nmcli -g GENERAL.CONNECTION device show "$INTERFACE" | head -n1)"
-    [[ -n "$connection_name" && "$connection_name" != "--" ]] || fail "Brak aktywnego polaczenia NetworkManager dla ${INTERFACE}."
-
-    sudo nmcli connection modify "$connection_name" \
-        ipv4.method manual \
-        ipv4.addresses "$PI_IP_CIDR" \
-        ipv4.gateway "$ROUTER_IP" \
-        ipv4.dns "${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}" \
-        ipv4.ignore-auto-dns yes \
-        connection.autoconnect yes
-    ok "Statyczne IP zapisane w NetworkManager (${connection_name})."
-    if ! ip -4 address show dev "$INTERFACE" | grep -Fq "inet ${PI_IP_CIDR}"; then
-        info "Aktywacja polaczenia moze chwilowo przerwac SSH."
-        sudo nmcli connection up "$connection_name"
+detect_network_interfaces() {
+    ETH_INTERFACE=${ETH_INTERFACE:-eth0}
+    WLAN_INTERFACE=${WLAN_INTERFACE:-wlan0}
+    if [[ ! -e "/sys/class/net/${ETH_INTERFACE}" && ! -e "/sys/class/net/${WLAN_INTERFACE}" ]]; then
+        fail "Nie znaleziono ${ETH_INTERFACE} ani ${WLAN_INTERFACE}."
     fi
+    export ETH_INTERFACE WLAN_INTERFACE
 }
 
-configure_dhcpcd() {
-    local config=/etc/dhcpcd.conf tmp
-    [[ -f "$config" ]] || fail "Aktywny dhcpcd nie ma pliku ${config}."
-    tmp="$(mktemp)"
-    sudo awk '
-        /^# home-services managed start$/ { skip=1; next }
-        /^# home-services managed end$/ { skip=0; next }
-        !skip { print }
-    ' "$config" > "$tmp"
-    cat >> "$tmp" <<EOF
-
-# home-services managed start
-interface ${INTERFACE}
-static ip_address=${PI_IP_CIDR}
-static routers=${ROUTER_IP}
-static domain_name_servers=${UPSTREAM_DNS_1} ${UPSTREAM_DNS_2}
-# home-services managed end
-EOF
-    [[ -f "${config}.home-services.bak" ]] || sudo cp -a "$config" "${config}.home-services.bak"
-    sudo install -m 644 "$tmp" "$config"
-    rm -f "$tmp"
-    if ! ip -4 address show dev "$INTERFACE" | grep -Fq "inet ${PI_IP_CIDR}"; then
-        sudo systemctl restart dhcpcd
-    fi
-    ok "Statyczne IP zapisane w dhcpcd."
-}
-
-configure_systemd_networkd() {
-    local network_file="/etc/systemd/network/05-home-services-${INTERFACE}.network"
-
-    sudo tee "$network_file" >/dev/null <<EOF
-# Managed by home-services. Local changes may be overwritten.
+write_networkd_link_config() {
+    local interface_name=$1
+    [[ -e "/sys/class/net/${interface_name}" ]] || return
+    sudo tee "/etc/systemd/network/05-home-services-${interface_name}.network" >/dev/null <<EOF
+# Managed by home-services. IPv4 is assigned by home-services-network.service.
 [Match]
-Name=${INTERFACE}
+Name=${interface_name}
 
 [Network]
 DHCP=no
-Address=${PI_IP_CIDR}
-Gateway=${ROUTER_IP}
-DNS=${UPSTREAM_DNS_1}
-DNS=${UPSTREAM_DNS_2}
+LinkLocalAddressing=ipv6
 IPv6AcceptRA=yes
 
 [Link]
-RequiredForOnline=yes
+RequiredForOnline=no
 EOF
+}
 
-    sudo chmod 644 "$network_file"
+configure_network_failover() {
+    systemctl is-active --quiet systemd-networkd || fail "Automatyczny failover wymaga aktywnego systemd-networkd."
+    detect_network_interfaces
+
+    local old_network_file
+    for old_network_file in /etc/systemd/network/05-home-services-*.network; do
+        [[ -e "$old_network_file" ]] || continue
+        sudo rm -f "$old_network_file"
+    done
+    write_networkd_link_config "$ETH_INTERFACE"
+    write_networkd_link_config "$WLAN_INTERFACE"
+    sudo cp "${SCRIPT_DIR}/network-failover.sh" /usr/local/sbin/home-services-network.sh
+    sudo chmod 755 /usr/local/sbin/home-services-network.sh
     sudo networkctl reload
-    ok "Statyczne IP zapisane dla systemd-networkd (${network_file})."
-
-    if ! ip -4 address show dev "$INTERFACE" | grep -Fq "inet ${PI_IP_CIDR}"; then
-        info "Przeladowanie ${INTERFACE} moze chwilowo przerwac SSH."
-        sudo networkctl reconfigure "$INTERFACE"
-    else
-        info "Interfejs ma juz ${PI_IP_CIDR}; nowa konfiguracja zacznie zarzadzac nim najpozniej po restarcie."
-    fi
+    ok "Skonfigurowano automatyczny failover: ${ETH_INTERFACE} -> ${WLAN_INTERFACE}."
+    info "Podczas instalacji zachowuje obecne polaczenie; po restarcie Ethernet bedzie preferowany."
 }
 
 remove_legacy_static_ip_service() {
@@ -121,18 +87,6 @@ remove_legacy_static_ip_service() {
         sudo systemctl disable --now home-services-static-ip.service 2>/dev/null || true
         sudo rm -f /etc/systemd/system/home-services-static-ip.service /usr/local/sbin/home-services-static-ip.sh
         sudo systemctl daemon-reload
-    fi
-}
-
-configure_static_ip() {
-    if systemctl is-active --quiet NetworkManager && command -v nmcli >/dev/null 2>&1; then
-        configure_networkmanager
-    elif systemctl is-active --quiet dhcpcd; then
-        configure_dhcpcd
-    elif systemctl is-active --quiet systemd-networkd && command -v networkctl >/dev/null 2>&1; then
-        configure_systemd_networkd
-    else
-        fail "Nie wykryto aktywnego NetworkManager, dhcpcd ani systemd-networkd. Nie zmieniam sieci recznie."
     fi
 }
 
@@ -156,7 +110,9 @@ install_files() {
 ensure_media_disk_mount() {
     require_command blkid
     require_command findmnt
-    sudo install -d -m 755 "$MEDIA_MOUNT_DIR"
+    if [[ ! -d "$MEDIA_MOUNT_DIR" ]]; then
+        sudo mkdir -p "$MEDIA_MOUNT_DIR"
+    fi
     if ! blkid -U "$MEDIA_DISK_UUID" >/dev/null 2>&1; then
         info "Dysk UUID=${MEDIA_DISK_UUID} nie jest widoczny; Jellyfin wystartuje z pustym katalogiem mediow."
         return
@@ -179,12 +135,45 @@ install_tun_boot_support() {
 }
 
 install_systemd_units() {
+    sudo tee /etc/systemd/system/home-services-network.service >/dev/null <<EOF
+[Unit]
+Description=Select Ethernet or Wi-Fi for the home-services address
+After=systemd-networkd.service wpa_supplicant.service
+Before=network-online.target home-services.service
+Wants=systemd-networkd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/home-services-network.sh once ${BASE_DIR}/.env
+RemainAfterExit=yes
+TimeoutStartSec=100
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo tee /etc/systemd/system/home-services-network-monitor.service >/dev/null <<EOF
+[Unit]
+Description=Monitor Ethernet/Wi-Fi failover for home-services
+Requires=home-services-network.service
+After=home-services-network.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/home-services-network.sh monitor ${BASE_DIR}/.env
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
     sudo tee /etc/systemd/system/home-services.service >/dev/null <<EOF
 [Unit]
 Description=Home services Docker Compose stack
-Requires=docker.service
+Requires=docker.service home-services-network.service
 Wants=network-online.target
-After=docker.service network-online.target
+After=docker.service home-services-network.service network-online.target
 
 [Service]
 Type=oneshot
@@ -228,7 +217,8 @@ WantedBy=timers.target
 EOF
 
     sudo systemctl daemon-reload
-    sudo systemctl enable home-services.service home-services-dhcp-metrics.timer >/dev/null
+    sudo systemctl enable home-services-network.service home-services-network-monitor.service \
+        home-services.service home-services-dhcp-metrics.timer >/dev/null
     ok "Uslugi systemd zostaly zainstalowane."
 }
 
@@ -268,26 +258,43 @@ scrub_tailscale_authkey() {
 }
 
 warn_about_existing_dhcp() {
+    local active_interface
+    active_interface="$(cat /run/home-services-network-interface 2>/dev/null || ip -4 route show default | awk '{ print $5; exit }')"
     info "Przed wylaczeniem DHCP w Funboxie przetestuj Pi-hole na jednym kliencie."
     if command -v nmap >/dev/null 2>&1; then
         info "Wynik wykrywania serwerow DHCP (obecny Funbox jest oczekiwany podczas migracji):"
-        sudo timeout 15 nmap --script broadcast-dhcp-discover -e "$INTERFACE" 2>/dev/null || true
+        sudo timeout 15 nmap --script broadcast-dhcp-discover -e "$active_interface" 2>/dev/null || true
     else
         info "Zainstaluj nmap, aby komenda diagnose mogla wykrywac drugi serwer DHCP."
     fi
 }
 
 main() {
+    local install_marker_created=false
+    cleanup_install_marker() {
+        [[ "$install_marker_created" == true ]] && sudo rm -f /run/home-services-installing
+    }
+    trap cleanup_install_marker EXIT
+
     remove_legacy_static_ip_service
-    configure_static_ip
     ensure_media_disk_mount
     install_files
+    configure_network_failover
     install_tun_boot_support
     install_systemd_units
 
     cd "$BASE_DIR"
     sudo docker compose --env-file .env -f compose.yaml config --quiet
-    sudo systemctl restart home-services.service
+    sudo touch /run/home-services-installing
+    install_marker_created=true
+    if ! sudo systemctl restart home-services-network.service; then
+        fail "Nie udalo sie uruchomic automatycznej konfiguracji sieci."
+    fi
+    if ! sudo systemctl restart home-services.service; then
+        fail "Nie udalo sie uruchomic kontenerow."
+    fi
+    sudo rm -f /run/home-services-installing
+    install_marker_created=false
     sudo systemctl start home-services-dhcp-metrics.timer
     scrub_tailscale_authkey
     enable_jellyfin_metrics

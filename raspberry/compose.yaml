@@ -29,7 +29,6 @@ services:
         ${DHCP_HOST_1}
         ${DHCP_HOST_2}
         ${DHCP_HOST_3}
-      INTERFACE: ${INTERFACE}
     volumes:
       - ./pihole/etc-pihole:/etc/pihole
     cap_add:

@@ -17,6 +17,7 @@ usage() {
 }
 
 status() {
+    echo "Aktywny interfejs: $(cat /run/home-services-network-interface 2>/dev/null || echo nieustalony)"
     "${COMPOSE[@]}" ps
     echo
     docker exec tailscale tailscale status || true
@@ -25,8 +26,10 @@ status() {
 }
 
 diagnose() {
+    active_interface="$(cat /run/home-services-network-interface 2>/dev/null || ip -4 route show default | awk '{ print $5; exit }')"
     echo "=== Siec ==="
-    ip -4 address show dev "$INTERFACE" || true
+    echo "Aktywny interfejs: ${active_interface:-brak}"
+    [[ -n "$active_interface" ]] && ip -4 address show dev "$active_interface" || true
     ip -4 route show || true
     echo "=== Porty DNS/DHCP/monitoring ==="
     sudo ss -lntup | awk 'NR == 1 || /:53 |:67 |:3000 |:8096 |:9002 |:9090 |:9100 |:9115 |:9617 /'
@@ -40,19 +43,23 @@ diagnose() {
     curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active' 2>/dev/null || true
     if command -v nmap >/dev/null 2>&1; then
         echo "=== Serwery DHCP widoczne w LAN ==="
-        sudo timeout 15 nmap --script broadcast-dhcp-discover -e "$INTERFACE" 2>/dev/null || true
+        sudo timeout 15 nmap --script broadcast-dhcp-discover -e "$active_interface" 2>/dev/null || true
     else
         echo "[i] nmap nie jest zainstalowany; pomijam wykrywanie drugiego DHCP."
     fi
 }
 
 uninstall_stack() {
-    sudo systemctl disable --now home-services-dhcp-metrics.timer home-services.service 2>/dev/null || true
+    sudo systemctl disable --now home-services-dhcp-metrics.timer home-services.service \
+        home-services-network-monitor.service home-services-network.service 2>/dev/null || true
     "${COMPOSE[@]}" down --remove-orphans || true
     sudo rm -f /etc/systemd/system/home-services.service \
         /etc/systemd/system/home-services-dhcp-metrics.service \
         /etc/systemd/system/home-services-dhcp-metrics.timer \
+        /etc/systemd/system/home-services-network.service \
+        /etc/systemd/system/home-services-network-monitor.service \
         /etc/modules-load.d/home-services-tun.conf
+    sudo rm -f /usr/local/sbin/home-services-network.sh /etc/systemd/network/05-home-services-*.network
     sudo systemctl daemon-reload
     echo "Uslugi usuniete. Dane pozostaly w ${BASE_DIR}."
 }
