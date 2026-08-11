@@ -1,4 +1,5 @@
 .zig
 .zig-cache
 zig-out
-zig.lock    
+zig.lock
+raspberry/.env

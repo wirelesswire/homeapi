@@ -1,0 +1,13 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {"type":"stat","title":"CPU busy","id":1,"gridPos":{"h":7,"w":6,"x":0,"y":0},"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}},"targets":[{"expr":"100 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100","refId":"A"}]},
+    {"type":"stat","title":"RAM used","id":2,"gridPos":{"h":7,"w":6,"x":6,"y":0},"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}},"targets":[{"expr":"100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)","refId":"A"}]},
+    {"type":"stat","title":"Root disk used","id":3,"gridPos":{"h":7,"w":6,"x":12,"y":0},"fieldConfig":{"defaults":{"unit":"percent","min":0,"max":100}},"targets":[{"expr":"100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"})","refId":"A"}]},
+    {"type":"stat","title":"Temperature","id":4,"gridPos":{"h":7,"w":6,"x":18,"y":0},"fieldConfig":{"defaults":{"unit":"celsius"}},"targets":[{"expr":"max(node_hwmon_temp_celsius)","refId":"A"}]},
+    {"type":"timeseries","title":"Network traffic","id":5,"gridPos":{"h":9,"w":24,"x":0,"y":7},"fieldConfig":{"defaults":{"unit":"Bps"}},"targets":[{"expr":"sum(rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))","legendFormat":"receive","refId":"A"},{"expr":"-sum(rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))","legendFormat":"transmit","refId":"B"}]}
+  ],
+  "refresh":"30s","schemaVersion":41,"tags":["home","raspberry"],"time":{"from":"now-6h","to":"now"},"title":"Raspberry Pi","uid":"home-host","version":1
+}

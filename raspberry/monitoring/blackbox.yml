@@ -1,0 +1,18 @@
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      preferred_ip_protocol: ip4
+      follow_redirects: true
+
+  dns_pihole:
+    prober: dns
+    timeout: 5s
+    dns:
+      preferred_ip_protocol: ip4
+      transport_protocol: udp
+      query_name: pi.hole
+      query_type: A
+      valid_rcodes: [NOERROR]

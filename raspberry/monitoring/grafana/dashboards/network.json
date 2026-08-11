@@ -1,0 +1,13 @@
+{
+  "annotations":{"list":[]},"editable":false,"graphTooltip":1,
+  "panels":[
+    {"type":"stat","title":"Pi-hole exporter","id":1,"gridPos":{"h":6,"w":4,"x":0,"y":0},"targets":[{"expr":"up{job=\"pihole\"}","refId":"A"}]},
+    {"type":"stat","title":"DNS probe","id":2,"gridPos":{"h":6,"w":4,"x":4,"y":0},"targets":[{"expr":"probe_success{job=\"dns-probe\"}","refId":"A"}]},
+    {"type":"stat","title":"Tailscale","id":3,"gridPos":{"h":6,"w":4,"x":8,"y":0},"targets":[{"expr":"up{job=\"tailscale\"}","refId":"A"}]},
+    {"type":"stat","title":"DHCP active leases","id":4,"gridPos":{"h":6,"w":4,"x":12,"y":0},"targets":[{"expr":"home_dhcp_active_leases","refId":"A"}]},
+    {"type":"gauge","title":"DHCP pool usage","id":5,"gridPos":{"h":6,"w":8,"x":16,"y":0},"fieldConfig":{"defaults":{"unit":"percentunit","min":0,"max":1,"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":0.8},{"color":"red","value":0.95}]}}},"targets":[{"expr":"home_dhcp_pool_utilization_ratio","refId":"A"}]},
+    {"type":"timeseries","title":"Pi-hole queries and blocks","id":6,"gridPos":{"h":9,"w":18,"x":0,"y":6},"targets":[{"expr":"pihole_dns_queries_today","legendFormat":"queries","refId":"A"},{"expr":"pihole_ads_blocked_today","legendFormat":"blocked","refId":"B"}]},
+    {"type":"stat","title":"Active alerts","id":7,"gridPos":{"h":9,"w":6,"x":18,"y":6},"targets":[{"expr":"sum(ALERTS{alertstate=\"firing\"}) or vector(0)","refId":"A"}]}
+  ],
+  "refresh":"30s","schemaVersion":41,"tags":["home","network","pihole","tailscale"],"time":{"from":"now-24h","to":"now"},"title":"Siec, DNS i DHCP","uid":"home-network","version":1
+}

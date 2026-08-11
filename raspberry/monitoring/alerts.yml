@@ -1,0 +1,49 @@
+groups:
+  - name: home-services
+    rules:
+      - alert: MonitoringTargetDown
+        expr: up == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target {{ $labels.job }} jest niedostepny"
+
+      - alert: ServiceProbeFailed
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Test uslugi {{ $labels.instance }} nie przechodzi"
+
+      - alert: RootDiskAlmostFull
+        expr: 100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Partycja root ma ponad 85% zajetosci"
+
+      - alert: RaspberryTemperatureHigh
+        expr: node_hwmon_temp_celsius > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Temperatura Raspberry Pi przekracza 80 C"
+
+      - alert: DhcpPoolAlmostFull
+        expr: home_dhcp_pool_utilization_ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pula DHCP jest wykorzystana w ponad 80%"
+
+      - alert: ContainerRestartedRepeatedly
+        expr: changes(container_start_time_seconds{name!=""}[30m]) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kontener {{ $labels.name }} restartowal sie co najmniej 3 razy"

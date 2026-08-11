@@ -1,0 +1,225 @@
+name: home-services
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  pihole:
+    container_name: pihole
+    image: ${PIHOLE_IMAGE}
+    network_mode: host
+    environment:
+      TZ: ${TIMEZONE}
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
+      FTLCONF_dns_listeningMode: ALL
+      FTLCONF_dns_upstreams: ${UPSTREAM_DNS_1};${UPSTREAM_DNS_2}
+      FTLCONF_dhcp_active: "true"
+      FTLCONF_dhcp_start: ${DHCP_START}
+      FTLCONF_dhcp_end: ${DHCP_END}
+      FTLCONF_dhcp_router: ${ROUTER_IP}
+      FTLCONF_dhcp_netmask: ${DHCP_NETMASK}
+      FTLCONF_dhcp_leaseTime: ${DHCP_LEASE_TIME}
+      FTLCONF_dhcp_ignoreUnknownClients: "false"
+      FTLCONF_misc_etc_dnsmasq_d: "false"
+      FTLCONF_misc_dnsmasq_lines: ""
+      FTLCONF_dhcp_hosts: |-
+        ${DHCP_HOST_1}
+        ${DHCP_HOST_2}
+        ${DHCP_HOST_3}
+      INTERFACE: ${INTERFACE}
+    volumes:
+      - ./pihole/etc-pihole:/etc/pihole
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+      - SYS_NICE
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD-SHELL, "dig +time=2 +tries=1 @127.0.0.1 pi.hole A >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    logging: *default-logging
+
+  tailscale:
+    container_name: tailscale
+    image: ${TAILSCALE_IMAGE}
+    hostname: ${TAILSCALE_HOSTNAME}
+    network_mode: host
+    environment:
+      TS_AUTHKEY: ${TAILSCALE_AUTHKEY:-}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_HOSTNAME: ${TAILSCALE_HOSTNAME}
+      TS_USERSPACE: "false"
+      TS_ACCEPT_DNS: "false"
+      TS_EXTRA_ARGS: --accept-dns=false
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_ENABLE_METRICS: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    volumes:
+      - ./tailscale/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    mem_limit: 96m
+    healthcheck:
+      test: [CMD-SHELL, "tailscale status --json >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+
+  jellyfin:
+    container_name: jellyfin
+    image: ${JELLYFIN_IMAGE}
+    network_mode: host
+    environment:
+      TZ: ${TIMEZONE}
+      JELLYFIN_PublishedServerUrl: http://${PI_IP}:${JELLYFIN_HTTP_PORT}
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - ${MEDIA_MOUNT_DIR}:/media:ro
+    mem_limit: 640m
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://127.0.0.1:${JELLYFIN_HTTP_PORT}/health >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    logging: *default-logging
+
+  prometheus:
+    container_name: prometheus
+    image: ${PROMETHEUS_IMAGE}
+    network_mode: host
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=2GB
+      - --web.listen-address=127.0.0.1:9090
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./prometheus:/prometheus
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD-SHELL, "wget -q --spider http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+
+  grafana:
+    container_name: grafana
+    image: ${GRAFANA_IMAGE}
+    network_mode: host
+    environment:
+      TZ: ${TIMEZONE}
+      GF_SERVER_HTTP_ADDR: 0.0.0.0
+      GF_SERVER_HTTP_PORT: ${GRAFANA_PORT}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    mem_limit: 192m
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "wget -q --spider http://127.0.0.1:${GRAFANA_PORT}/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+    logging: *default-logging
+
+  node-exporter:
+    container_name: node-exporter
+    image: ${NODE_EXPORTER_IMAGE}
+    network_mode: host
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+      - --web.listen-address=127.0.0.1:9100
+      - --no-collector.wifi
+    volumes:
+      - /:/host:ro,rslave
+      - ./monitoring/textfile:/textfile:ro
+    mem_limit: 48m
+    restart: unless-stopped
+    logging: *default-logging
+
+  cadvisor:
+    container_name: cadvisor
+    image: ${CADVISOR_IMAGE}
+    network_mode: host
+    privileged: true
+    command:
+      - --listen_ip=127.0.0.1
+      - --port=8081
+      - --housekeeping_interval=30s
+      - --docker_only=true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    mem_limit: 96m
+    restart: unless-stopped
+    logging: *default-logging
+
+  blackbox-exporter:
+    container_name: blackbox-exporter
+    image: ${BLACKBOX_IMAGE}
+    network_mode: host
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+      - --web.listen-address=127.0.0.1:9115
+    volumes:
+      - ./monitoring/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    mem_limit: 48m
+    restart: unless-stopped
+    logging: *default-logging
+
+  pihole-exporter:
+    container_name: pihole-exporter
+    image: ${PIHOLE_EXPORTER_IMAGE}
+    network_mode: host
+    environment:
+      PIHOLE_HOSTNAME: 127.0.0.1
+      PIHOLE_PORT: "80"
+      PIHOLE_PROTOCOL: http
+      PIHOLE_PASSWORD: ${PIHOLE_PASSWORD}
+      BIND_ADDR: 127.0.0.1
+      PORT: "9617"
+    mem_limit: 48m
+    depends_on:
+      pihole:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging

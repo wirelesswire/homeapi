@@ -1,0 +1,9 @@
+{
+  "annotations":{"list":[]},"editable":false,"graphTooltip":1,
+  "panels":[
+    {"type":"timeseries","title":"Container CPU","id":1,"gridPos":{"h":9,"w":12,"x":0,"y":0},"fieldConfig":{"defaults":{"unit":"percentunit"}},"targets":[{"expr":"sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[5m]))","legendFormat":"{{name}}","refId":"A"}]},
+    {"type":"timeseries","title":"Container memory","id":2,"gridPos":{"h":9,"w":12,"x":12,"y":0},"fieldConfig":{"defaults":{"unit":"bytes"}},"targets":[{"expr":"container_memory_working_set_bytes{name!=\"\"}","legendFormat":"{{name}}","refId":"A"}]},
+    {"type":"table","title":"Container start time","id":3,"gridPos":{"h":9,"w":24,"x":0,"y":9},"targets":[{"expr":"container_start_time_seconds{name!=\"\"}","format":"table","instant":true,"refId":"A"}]}
+  ],
+  "refresh":"30s","schemaVersion":41,"tags":["home","docker"],"time":{"from":"now-6h","to":"now"},"title":"Kontenery","uid":"home-containers","version":1
+}

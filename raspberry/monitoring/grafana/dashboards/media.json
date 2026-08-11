@@ -1,0 +1,11 @@
+{
+  "annotations":{"list":[]},"editable":false,"graphTooltip":1,
+  "panels":[
+    {"type":"stat","title":"Jellyfin metrics","id":1,"gridPos":{"h":6,"w":6,"x":0,"y":0},"targets":[{"expr":"up{job=\"jellyfin\"}","refId":"A"}]},
+    {"type":"stat","title":"Jellyfin health probe","id":2,"gridPos":{"h":6,"w":6,"x":6,"y":0},"targets":[{"expr":"probe_success{job=\"http-probes\",instance=~\".*8096.*\"}","refId":"A"}]},
+    {"type":"stat","title":"Jellyfin process CPU","id":3,"gridPos":{"h":6,"w":6,"x":12,"y":0},"fieldConfig":{"defaults":{"unit":"percentunit"}},"targets":[{"expr":"sum(rate(container_cpu_usage_seconds_total{name=\"jellyfin\"}[5m]))","refId":"A"}]},
+    {"type":"stat","title":"Jellyfin memory","id":4,"gridPos":{"h":6,"w":6,"x":18,"y":0},"fieldConfig":{"defaults":{"unit":"bytes"}},"targets":[{"expr":"container_memory_working_set_bytes{name=\"jellyfin\"}","refId":"A"}]},
+    {"type":"timeseries","title":"Native Jellyfin metrics","id":5,"gridPos":{"h":10,"w":24,"x":0,"y":6},"targets":[{"expr":"{__name__=~\"jellyfin_.*\"}","legendFormat":"{{__name__}}","refId":"A"}]}
+  ],
+  "refresh":"30s","schemaVersion":41,"tags":["home","jellyfin"],"time":{"from":"now-6h","to":"now"},"title":"Jellyfin","uid":"home-media","version":1
+}
