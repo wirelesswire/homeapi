@@ -1,6 +1,6 @@
 # Home services na Raspberry Pi
 
-Stos uruchamia Pi-hole z DHCP, Tailscale, Jellyfin oraz monitoring Grafana/Prometheus. Konfiguracja sieci jest zarzadzana przez jeden aktywny menedzer (`NetworkManager` albo `dhcpcd`), a Compose startuje z systemd po uzyskaniu lacznosci.
+Stos uruchamia Pi-hole z DHCP, Tailscale, Jellyfin oraz monitoring Grafana/Prometheus. Konfiguracja sieci jest zarzadzana przez jeden aktywny menedzer (`NetworkManager`, `dhcpcd` albo `systemd-networkd`), a Compose startuje z systemd po uzyskaniu lacznosci.
 
 ## Instalacja
 

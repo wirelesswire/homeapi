@@ -83,6 +83,38 @@ EOF
     ok "Statyczne IP zapisane w dhcpcd."
 }
 
+configure_systemd_networkd() {
+    local network_file="/etc/systemd/network/05-home-services-${INTERFACE}.network"
+
+    sudo tee "$network_file" >/dev/null <<EOF
+# Managed by home-services. Local changes may be overwritten.
+[Match]
+Name=${INTERFACE}
+
+[Network]
+DHCP=no
+Address=${PI_IP_CIDR}
+Gateway=${ROUTER_IP}
+DNS=${UPSTREAM_DNS_1}
+DNS=${UPSTREAM_DNS_2}
+IPv6AcceptRA=yes
+
+[Link]
+RequiredForOnline=yes
+EOF
+
+    sudo chmod 644 "$network_file"
+    sudo networkctl reload
+    ok "Statyczne IP zapisane dla systemd-networkd (${network_file})."
+
+    if ! ip -4 address show dev "$INTERFACE" | grep -Fq "inet ${PI_IP_CIDR}"; then
+        info "Przeladowanie ${INTERFACE} moze chwilowo przerwac SSH."
+        sudo networkctl reconfigure "$INTERFACE"
+    else
+        info "Interfejs ma juz ${PI_IP_CIDR}; nowa konfiguracja zacznie zarzadzac nim najpozniej po restarcie."
+    fi
+}
+
 remove_legacy_static_ip_service() {
     if systemctl list-unit-files home-services-static-ip.service --no-legend 2>/dev/null | grep -q home-services-static-ip; then
         info "Usuwam stara usluge, ktora recznie nadpisywala IP i resolv.conf."
@@ -97,8 +129,10 @@ configure_static_ip() {
         configure_networkmanager
     elif systemctl is-active --quiet dhcpcd; then
         configure_dhcpcd
+    elif systemctl is-active --quiet systemd-networkd && command -v networkctl >/dev/null 2>&1; then
+        configure_systemd_networkd
     else
-        fail "Nie wykryto aktywnego NetworkManager ani dhcpcd. Nie zmieniam sieci recznie."
+        fail "Nie wykryto aktywnego NetworkManager, dhcpcd ani systemd-networkd. Nie zmieniam sieci recznie."
     fi
 }
 

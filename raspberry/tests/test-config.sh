@@ -9,7 +9,8 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 bash "${ROOT}/validate-config.sh" "$FIXTURE"
 
-if bash "${ROOT}/validate-config.sh" "${ROOT}/.env.example" >/dev/null 2>&1; then
+sed 's#PIHOLE_PASSWORD=.*#PIHOLE_PASSWORD=REPLACE_WITH_A_LONG_RANDOM_PASSWORD#; s#GRAFANA_ADMIN_PASSWORD=.*#GRAFANA_ADMIN_PASSWORD=REPLACE_WITH_A_DIFFERENT_LONG_PASSWORD#' "$FIXTURE" > "${tmp_dir}/placeholder.env"
+if bash "${ROOT}/validate-config.sh" "${tmp_dir}/placeholder.env" >/dev/null 2>&1; then
     echo "Walidator zaakceptowal przykladowe hasla." >&2
     exit 1
 fi
