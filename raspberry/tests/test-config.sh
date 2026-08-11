@@ -35,6 +35,8 @@ grep -Fq '[[ ! -d "$MEDIA_MOUNT_DIR" ]]' "${ROOT}/setup-home-services.sh"
 grep -Fq 'image: ghcr.io/google/cadvisor:v0.60.5' "${ROOT}/compose.yaml"
 grep -Fq 'TimeoutStartSec=0' "${ROOT}/setup-home-services.sh"
 grep -Fq 'sudo docker compose --env-file .env -f compose.yaml pull' "${ROOT}/setup-home-services.sh"
+grep -Fq 'INSTALL_MARKER_CREATED=false' "${ROOT}/setup-home-services.sh"
+grep -Fq 'trap cleanup_install_marker EXIT' "${ROOT}/setup-home-services.sh"
 if grep -Fq 'networkctl reload' "${ROOT}/setup-home-services.sh"; then
     echo "Instalator nie moze przeladowywac sieci podczas sesji SSH." >&2
     exit 1

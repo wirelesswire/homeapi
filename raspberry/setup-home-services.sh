@@ -9,6 +9,20 @@ fail() { printf '[!] %s\n' "$*" >&2; exit 1; }
 info() { printf '[i] %s\n' "$*"; }
 ok() { printf '[+] %s\n' "$*"; }
 
+INSTALL_MARKER_CREATED=false
+cleanup_install_marker() {
+    if [[ "${INSTALL_MARKER_CREATED:-false}" == true ]]; then
+        sudo rm -f /run/home-services-installing
+    fi
+}
+report_unhandled_error() {
+    local status=$?
+    printf '[!] Nieoczekiwany blad w linii %s (kod %s).\n' "${BASH_LINENO[0]:-?}" "$status" >&2
+    return "$status"
+}
+trap cleanup_install_marker EXIT
+trap report_unhandled_error ERR
+
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "Brakuje polecenia: $1"
 }
@@ -268,12 +282,7 @@ warn_about_existing_dhcp() {
 }
 
 main() {
-    local install_marker_created=false
-    cleanup_install_marker() {
-        [[ "$install_marker_created" == true ]] && sudo rm -f /run/home-services-installing
-    }
-    trap cleanup_install_marker EXIT
-
+    sudo rm -f /run/home-services-installing
     remove_legacy_static_ip_service
     ensure_media_disk_mount
     install_files
@@ -284,9 +293,11 @@ main() {
     cd "$BASE_DIR"
     sudo docker compose --env-file .env -f compose.yaml config --quiet
     info "Pobieram obrazy kontenerow. Pierwsze uruchomienie moze potrwac kilkanascie minut."
-    sudo docker compose --env-file .env -f compose.yaml pull
+    if ! sudo docker compose --env-file .env -f compose.yaml pull; then
+        fail "Nie udalo sie pobrac wszystkich obrazow kontenerow."
+    fi
     sudo touch /run/home-services-installing
-    install_marker_created=true
+    INSTALL_MARKER_CREATED=true
     if ! sudo systemctl restart home-services-network.service; then
         fail "Nie udalo sie uruchomic automatycznej konfiguracji sieci."
     fi
@@ -294,7 +305,7 @@ main() {
         fail "Nie udalo sie uruchomic kontenerow."
     fi
     sudo rm -f /run/home-services-installing
-    install_marker_created=false
+    INSTALL_MARKER_CREATED=false
     sudo systemctl start home-services-dhcp-metrics.timer
     scrub_tailscale_authkey
     enable_jellyfin_metrics
