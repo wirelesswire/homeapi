@@ -143,7 +143,7 @@ services:
       - ./grafana:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    mem_limit: 384m
+    mem_limit: 512m
     depends_on:
       prometheus:
         condition: service_healthy

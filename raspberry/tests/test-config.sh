@@ -8,6 +8,8 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 bash "${ROOT}/validate-config.sh" "$FIXTURE"
+sed 's#GRAFANA_ADMIN_PASSWORD=.*#GRAFANA_ADMIN_PASSWORD=admin#' "$FIXTURE" > "${tmp_dir}/admin.env"
+bash "${ROOT}/validate-config.sh" "${tmp_dir}/admin.env"
 
 sed 's#PIHOLE_PASSWORD=.*#PIHOLE_PASSWORD=REPLACE_WITH_A_LONG_RANDOM_PASSWORD#; s#GRAFANA_ADMIN_PASSWORD=.*#GRAFANA_ADMIN_PASSWORD=REPLACE_WITH_A_DIFFERENT_LONG_PASSWORD#' "$FIXTURE" > "${tmp_dir}/placeholder.env"
 if bash "${ROOT}/validate-config.sh" "${tmp_dir}/placeholder.env" >/dev/null 2>&1; then
@@ -37,7 +39,7 @@ grep -Fq 'http://127.0.0.1:8081/healthz' "${ROOT}/compose.yaml"
 grep -Fq 'GF_DATABASE_HIGH_AVAILABILITY: "false"' "${ROOT}/compose.yaml"
 grep -Fq 'GF_DATABASE_WAL: "true"' "${ROOT}/compose.yaml"
 grep -Fq 'GF_DATABASE_QUERY_RETRIES: "10"' "${ROOT}/compose.yaml"
-grep -Fq 'mem_limit: 384m' "${ROOT}/compose.yaml"
+grep -Fq 'mem_limit: 512m' "${ROOT}/compose.yaml"
 grep -Fq 'curl -fsS --max-time 10 http://127.0.0.1:${GRAFANA_PORT}/api/health' "${ROOT}/compose.yaml"
 grep -Fq 'TimeoutStartSec=0' "${ROOT}/setup-home-services.sh"
 grep -Fq 'sudo docker compose --env-file .env -f compose.yaml pull' "${ROOT}/setup-home-services.sh"

@@ -53,7 +53,7 @@ for protected in "$pi_ip" "$ROUTER_IP"; do
 done
 
 [[ ${#PIHOLE_PASSWORD} -ge 12 && "$PIHOLE_PASSWORD" != "admin" && "$PIHOLE_PASSWORD" != REPLACE_* ]] || fail "PIHOLE_PASSWORD musi miec min. 12 znakow i nie moze byc wartoscia przykladowa."
-[[ ${#GRAFANA_ADMIN_PASSWORD} -ge 12 && "$GRAFANA_ADMIN_PASSWORD" != "admin" && "$GRAFANA_ADMIN_PASSWORD" != REPLACE_* ]] || fail "GRAFANA_ADMIN_PASSWORD musi miec min. 12 znakow i nie moze byc wartoscia przykladowa."
+[[ "$GRAFANA_ADMIN_PASSWORD" == "admin" || ( ${#GRAFANA_ADMIN_PASSWORD} -ge 12 && "$GRAFANA_ADMIN_PASSWORD" != REPLACE_* ) ]] || fail "GRAFANA_ADMIN_PASSWORD musi byc testowym 'admin' albo miec min. 12 znakow i nie moze byc wartoscia przykladowa."
 [[ -z "${TAILSCALE_AUTHKEY:-}" || "$TAILSCALE_AUTHKEY" != *REPLACE_ME* ]] || fail "Uzupelnij TAILSCALE_AUTHKEY albo zostaw pusty dla istniejacego stanu/recznego logowania."
 [[ "${JELLYFIN_HTTP_PORT:-8096}" == "8096" && "${JELLYFIN_HTTPS_PORT:-8920}" == "8920" ]] || fail "Przy network_mode=host Jellyfin wymaga portow 8096 i 8920."
 [[ "${GRAFANA_PORT:-3000}" =~ ^[0-9]+$ ]] && (( GRAFANA_PORT >= 1 && GRAFANA_PORT <= 65535 )) || fail "Niepoprawny GRAFANA_PORT."
