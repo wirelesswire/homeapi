@@ -32,11 +32,23 @@ diagnose() {
     [[ -n "$active_interface" ]] && ip -4 address show dev "$active_interface" || true
     ip -4 route show || true
     echo "=== Porty DNS/DHCP/monitoring ==="
-    sudo ss -lntup | awk 'NR == 1 || /:53 |:67 |:3000 |:8096 |:9002 |:9090 |:9100 |:9115 |:9617 /'
+    sudo ss -lntup | awk 'NR == 1 || /:53 |:67 |:3000 |:8081 |:8096 |:9002 |:9090 |:9100 |:9115 |:9617 /'
+    echo "=== Grafana lokalnie ==="
+    curl -fsS -v "http://127.0.0.1:${GRAFANA_PORT}/api/health" 2>&1 || true
+    echo "=== Firewall ==="
+    if command -v ufw >/dev/null 2>&1; then sudo ufw status verbose || true; fi
+    if command -v nft >/dev/null 2>&1; then sudo nft list ruleset 2>/dev/null | grep -E 'hook input|policy|3000' || true; fi
     echo "=== Kontenery ==="
     "${COMPOSE[@]}" ps
     echo "=== Ostatnie logi krytycznych uslug ==="
-    "${COMPOSE[@]}" logs --tail=80 pihole tailscale prometheus grafana
+    "${COMPOSE[@]}" logs --tail=80 pihole tailscale prometheus grafana cadvisor
+    echo "=== Healthchecki ==="
+    for container in pihole tailscale jellyfin prometheus grafana cadvisor; do
+        printf '%s: ' "$container"
+        docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}brak{{end}}' "$container" 2>/dev/null || true
+    done
+    echo "=== Dzierzawa PC ==="
+    grep -i '50:91:e3:21:ba:17' "${BASE_DIR}/pihole/etc-pihole/dhcp.leases" 2>/dev/null || echo "brak aktywnej dzierzawy PC w Pi-hole"
     echo "=== Tailscale ==="
     docker exec tailscale tailscale status || true
     echo "=== Targety Prometheusa ==="

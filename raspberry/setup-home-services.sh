@@ -38,6 +38,23 @@ set +a
 
 BASE_DIR="${BASE_DIR:-${HOME}/home-services}"
 
+migrate_known_configuration() {
+    local old_reservation='50:91:E2:21:BA:17,192.168.1.12,stacjonarny,24h'
+    local new_reservation='50:91:E3:21:BA:17,192.168.1.12,stacjonarny,24h'
+    if [[ "${DHCP_HOST_2:-}" == "$old_reservation" ]]; then
+        if [[ ! -w "$SOURCE_ENV" ]]; then
+            fail "Nie moge automatycznie poprawic starej rezerwacji DHCP w ${SOURCE_ENV}."
+        fi
+        sed -i "s#^DHCP_HOST_2=${old_reservation}\$#DHCP_HOST_2=${new_reservation}#" "$SOURCE_ENV"
+        DHCP_HOST_2=$new_reservation
+        export DHCP_HOST_2
+        ok "Poprawiono rezerwacje PC: 50:91:E3:21:BA:17 -> 192.168.1.12."
+    fi
+    return 0
+}
+
+migrate_known_configuration
+
 require_command docker
 require_command ip
 require_command systemctl
@@ -308,6 +325,44 @@ show_service_failure() {
     return 0
 }
 
+configure_grafana_firewall() {
+    command -v ufw >/dev/null 2>&1 || return 0
+    sudo ufw status 2>/dev/null | grep -q '^Status: active' || return 0
+    local lan_subnet="${PI_IP%.*}.0/24"
+    sudo ufw allow from "$lan_subnet" to any port "$GRAFANA_PORT" proto tcp comment 'home-services Grafana LAN' >/dev/null
+    if [[ -e /sys/class/net/tailscale0 ]]; then
+        sudo ufw allow in on tailscale0 to any port "$GRAFANA_PORT" proto tcp comment 'home-services Grafana Tailscale' >/dev/null
+    fi
+    ok "Firewall UFW dopuszcza Grafane z LAN i Tailscale."
+    return 0
+}
+
+verify_runtime() {
+    local attempt grafana_ready=false
+    for ((attempt = 1; attempt <= 30; attempt++)); do
+        if curl -fsS "http://127.0.0.1:${GRAFANA_PORT}/api/health" >/dev/null 2>&1; then
+            grafana_ready=true
+            break
+        fi
+        sleep 2
+    done
+    if [[ "$grafana_ready" != true ]]; then
+        show_service_failure home-services.service
+        sudo docker logs --tail=80 grafana 2>&1 || true
+        fail "Grafana nie odpowiada lokalnie na porcie ${GRAFANA_PORT}."
+    fi
+    if ! sudo ss -ltnH "sport = :${GRAFANA_PORT}" | awk '{print $4}' | grep -Eq '(^|\])0\.0\.0\.0:|^\*:|^\[::\]:'; then
+        sudo ss -ltnp "sport = :${GRAFANA_PORT}" || true
+        fail "Grafana nie nasluchuje na wszystkich interfejsach."
+    fi
+    if ! sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' cadvisor | grep -qx healthy; then
+        info "cAdvisor jeszcze nie jest healthy; pokazuje ostatni wynik healthchecku."
+        sudo docker inspect --format '{{range .State.Health.Log}}{{.Output}}{{end}}' cadvisor 2>/dev/null || true
+    fi
+    ok "Grafana odpowiada i nasluchuje w LAN; test cAdvisor zostal wykonany."
+    return 0
+}
+
 main() {
     sudo rm -f /run/home-services-installing
     remove_legacy_static_ip_service
@@ -338,6 +393,8 @@ main() {
     if ! sudo systemctl start home-services-dhcp-metrics.timer; then
         info "Nie udalo sie uruchomic timera metryk DHCP; kontenery pozostaja uruchomione."
     fi
+    configure_grafana_firewall
+    verify_runtime
     scrub_tailscale_authkey
     enable_jellyfin_metrics
     warn_about_existing_dhcp

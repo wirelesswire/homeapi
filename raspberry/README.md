@@ -39,6 +39,17 @@ sudo reboot
 ```
 
 Stary wpis `INTERFACE=eth0` w istniejącym `.env` jest ignorowany i nie trzeba go usuwać.
+Instalator automatycznie migruje też historyczną literówkę rezerwacji PC `50:91:E2:...` na rzeczywisty MAC `50:91:E3:...` i adres `192.168.1.12`.
+
+Po tej migracji klient Windows musi poprosić o nową dzierżawę:
+
+```powershell
+ipconfig /release
+ipconfig /renew
+ipconfig /all
+```
+
+Oczekiwany adres to `192.168.1.12`, a pole `DHCP Server` powinno wskazywać `192.168.1.14`. Jeśli wskazuje `192.168.1.1`, DHCP w Funboxie nadal odpowiada i musi zostać wyłączone po potwierdzeniu działania Pi-hole.
 
 ## Administracja
 

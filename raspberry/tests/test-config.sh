@@ -33,6 +33,7 @@ grep -Fq 'Skonfigurowano automatyczny failover' "${ROOT}/setup-home-services.sh"
 grep -Fq 'if exists "$ETH_INTERFACE" && carrier "$ETH_INTERFACE"' "${ROOT}/network-failover.sh"
 grep -Fq '[[ ! -d "$MEDIA_MOUNT_DIR" ]]' "${ROOT}/setup-home-services.sh"
 grep -Fq 'image: ghcr.io/google/cadvisor:v0.60.5' "${ROOT}/compose.yaml"
+grep -Fq 'http://127.0.0.1:8081/healthz' "${ROOT}/compose.yaml"
 grep -Fq 'TimeoutStartSec=0' "${ROOT}/setup-home-services.sh"
 grep -Fq 'sudo docker compose --env-file .env -f compose.yaml pull' "${ROOT}/setup-home-services.sh"
 grep -Fq 'INSTALL_MARKER_CREATED=false' "${ROOT}/setup-home-services.sh"
@@ -49,6 +50,18 @@ write_networkd_link_config home_services_missing_interface
 dns_functions="$(sed -n '/^exists()/,/^}/p; /^configure_dns()/,/^}/p' "${ROOT}/network-failover.sh")"
 eval "$dns_functions"
 PATH=/nonexistent configure_dns wlan0
+
+grep -Fq "old_reservation='50:91:E2:21:BA:17,192.168.1.12,stacjonarny,24h'" "${ROOT}/setup-home-services.sh"
+grep -Fq "new_reservation='50:91:E3:21:BA:17,192.168.1.12,stacjonarny,24h'" "${ROOT}/setup-home-services.sh"
+sed 's/50:91:E3:21:BA:17/50:91:E2:21:BA:17/' "$FIXTURE" > "${tmp_dir}/migration.env"
+migration_function="$(sed -n '/^migrate_known_configuration()/,/^}/p' "${ROOT}/setup-home-services.sh")"
+eval "$migration_function"
+fail() { echo "$*" >&2; return 1; }
+ok() { :; }
+SOURCE_ENV="${tmp_dir}/migration.env"
+export DHCP_HOST_2='50:91:E2:21:BA:17,192.168.1.12,stacjonarny,24h'
+migrate_known_configuration
+grep -Fq 'DHCP_HOST_2=50:91:E3:21:BA:17,192.168.1.12,stacjonarny,24h' "$SOURCE_ENV"
 if grep -Fq 'networkctl reload' "${ROOT}/setup-home-services.sh"; then
     echo "Instalator nie moze przeladowywac sieci podczas sesji SSH." >&2
     exit 1
